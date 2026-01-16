@@ -81,19 +81,60 @@ show_banner() {
 # ==================== 安装相关 ====================
 install_deps() {
     log_info "安装依赖..."
+    
+    # 首先尝试安装基础包管理器需要的工具
+    command -v curl >/dev/null || { 
+        # 尝试各种包管理器
+        apt-get update && apt-get install -y curl 2>/dev/null || \
+        yum install -y curl 2>/dev/null || \
+        dnf install -y curl 2>/dev/null || \
+        apk add curl 2>/dev/null
+    }
+    
     case $OS in
         ubuntu|debian)
-            apt-get update -y
-            apt-get install -y curl wget jq openssl unzip python3 python3-pip python3-venv socat cron
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -y || apt update -y
+            apt-get install -y curl wget jq openssl unzip python3 socat cron 2>/dev/null || \
+            apt install -y curl wget jq openssl unzip python3 socat cron
+            # 尝试安装 pip 和 venv (不同版本包名不同)
+            apt-get install -y python3-pip python3-venv 2>/dev/null || \
+            apt-get install -y python3-pip 2>/dev/null || true
             ;;
         centos|rhel|fedora|rocky|almalinux)
-            yum install -y curl wget jq openssl unzip python3 python3-pip socat cronie 2>/dev/null || \
-            dnf install -y curl wget jq openssl unzip python3 python3-pip socat cronie
+            # 先尝试 dnf，再尝试 yum
+            if command -v dnf >/dev/null 2>&1; then
+                dnf install -y epel-release 2>/dev/null || true
+                dnf install -y curl wget jq openssl unzip python3 python3-pip socat cronie
+            else
+                yum install -y epel-release 2>/dev/null || true
+                yum install -y curl wget jq openssl unzip python3 python3-pip socat cronie
+            fi
             ;;
         alpine)
-            apk add curl wget jq openssl unzip python3 py3-pip bash socat
+            apk update
+            apk add curl wget jq openssl unzip python3 py3-pip bash socat openrc
+            ;;
+        arch|manjaro)
+            pacman -Sy --noconfirm curl wget jq openssl unzip python python-pip socat cronie
+            ;;
+        *)
+            log_warn "未知系统，尝试通用安装..."
+            apt-get update && apt-get install -y curl wget jq openssl unzip python3 python3-pip socat 2>/dev/null || \
+            yum install -y curl wget jq openssl unzip python3 python3-pip socat 2>/dev/null || \
+            dnf install -y curl wget jq openssl unzip python3 python3-pip socat 2>/dev/null || \
+            log_error "无法安装依赖，请手动安装: curl wget jq openssl unzip python3 python3-pip socat"
             ;;
     esac
+    
+    # 确保 python3-venv 模块可用
+    python3 -m venv --help >/dev/null 2>&1 || {
+        log_warn "尝试安装 python3-venv..."
+        apt-get install -y python3-venv 2>/dev/null || \
+        yum install -y python3-virtualenv 2>/dev/null || \
+        dnf install -y python3-virtualenv 2>/dev/null || \
+        pip3 install virtualenv 2>/dev/null || true
+    }
 }
 
 download_singbox() {
