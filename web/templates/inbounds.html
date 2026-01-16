@@ -35,9 +35,11 @@
             {% endif %}
         </div>
         <div class="node-actions">
-            <button class="btn btn-sm btn-info" onclick="copyShareLink('{{ inbound.share_link }}')">复制链接</button>
-            <button class="btn btn-sm btn-secondary" onclick="showDetails('{{ inbound.tag }}')">详情</button>
-            <button class="btn btn-sm btn-danger" onclick="deleteInbound('{{ inbound.tag }}')">删除</button>
+            <button class="btn btn-sm btn-info" onclick="showQRCode('{{ inbound.tag }}')" title="二维码">📱</button>
+            <button class="btn btn-sm btn-info" onclick="copyShareLink('{{ inbound.share_link }}')"
+                title="复制链接">📋</button>
+            <button class="btn btn-sm btn-secondary" onclick="showDetails('{{ inbound.tag }}')" title="详情">🔍</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteInbound('{{ inbound.tag }}')" title="删除">🗑️</button>
         </div>
     </div>
     {% else %}
@@ -121,6 +123,24 @@
     </div>
 </div>
 
+<!-- 二维码弹窗 -->
+<div class="modal" id="qr-modal">
+    <div class="modal-content modal-sm">
+        <div class="modal-header">
+            <h3>扫码添加节点</h3>
+            <button class="modal-close" onclick="closeQRModal()">&times;</button>
+        </div>
+        <div class="modal-body qr-body">
+            <img id="qr-image" src="" alt="QRCode">
+            <p id="qr-tag" class="qr-tag"></p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-info" id="qr-copy-btn" onclick="copyQRLink()">复制链接</button>
+            <button class="btn btn-secondary" onclick="closeQRModal()">关闭</button>
+        </div>
+    </div>
+</div>
+
 <!-- 详情弹窗 -->
 <div class="modal" id="details-modal">
     <div class="modal-content">
@@ -136,8 +156,43 @@
     </div>
 </div>
 
+<style>
+    .modal-sm {
+        max-width: 360px;
+    }
+
+    .qr-body {
+        text-align: center;
+        padding: 1.5rem;
+    }
+
+    .qr-body img {
+        max-width: 280px;
+        border-radius: var(--radius);
+        margin-bottom: 1rem;
+    }
+
+    .qr-tag {
+        color: var(--primary);
+        font-weight: bold;
+        margin: 0;
+    }
+
+    .node-actions {
+        display: flex;
+        gap: 0.25rem;
+        flex-wrap: wrap;
+    }
+
+    .node-actions .btn-sm {
+        min-width: 36px;
+        padding: 0.25rem 0.5rem;
+    }
+</style>
+
 <script>
     const inboundsData = {{ inbounds | tojson | safe }};
+    let currentQRLink = '';
 
     function showAddModal() {
         document.getElementById('add-modal').classList.add('active');
@@ -153,18 +208,42 @@
         document.querySelectorAll('.protocol-fields').forEach(el => el.classList.add('hidden'));
         document.getElementById(`fields-${protocol}`).classList.remove('hidden');
 
-        // 更新默认标签和端口
+        // 更新默认标签
         const tagInput = document.getElementById('tag');
-        const portInput = document.getElementById('port');
-
         if (!tagInput.value) {
             tagInput.placeholder = `${protocol}-in`;
         }
+    }
 
-        if (protocol === 'tuic' && portInput.value === '443') {
-            portInput.value = '8443';
-        } else if (protocol !== 'tuic' && portInput.value === '8443') {
-            portInput.value = '443';
+    async function showQRCode(tag) {
+        try {
+            const response = await fetch(`/api/qrcode/${tag}`);
+            const data = await response.json();
+
+            if (data.success) {
+                document.getElementById('qr-image').src = data.data.qrcode;
+                document.getElementById('qr-tag').textContent = tag;
+                currentQRLink = data.data.share_link;
+                document.getElementById('qr-modal').classList.add('active');
+            } else {
+                showToast(data.error || '获取二维码失败', 'error');
+            }
+        } catch (error) {
+            showToast('获取二维码失败', 'error');
+        }
+    }
+
+    function closeQRModal() {
+        document.getElementById('qr-modal').classList.remove('active');
+    }
+
+    function copyQRLink() {
+        if (currentQRLink) {
+            navigator.clipboard.writeText(currentQRLink).then(() => {
+                showToast('链接已复制', 'success');
+            }).catch(() => {
+                showToast('复制失败', 'error');
+            });
         }
     }
 
