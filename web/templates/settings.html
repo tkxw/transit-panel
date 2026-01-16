@@ -232,7 +232,7 @@
             const data = await response.json();
 
             if (data.success) {
-                showToast('配置已保存', 'success');
+                showToast(data.message || '配置已保存', 'success');
                 loadConfig();
             } else {
                 showToast(data.error || '保存失败', 'error');
