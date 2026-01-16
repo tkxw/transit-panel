@@ -194,6 +194,47 @@
         align-items: center;
         justify-content: center;
     }
+
+    /* 节点标签美化 */
+    .node-tag {
+        font-size: 1.1rem;
+        font-weight: 700;
+        color: var(--primary);
+        background: rgba(59, 130, 246, 0.15);
+        padding: 0.25rem 0.75rem;
+        border-radius: 0.5rem;
+        border: 1px solid rgba(59, 130, 246, 0.3);
+    }
+
+    .node-type {
+        font-size: 0.7rem;
+        font-weight: 600;
+        padding: 0.2rem 0.5rem;
+        border-radius: 0.25rem;
+        text-transform: uppercase;
+    }
+
+    .node-type.hysteria2 {
+        background: rgba(236, 72, 153, 0.2);
+        color: #ec4899;
+    }
+
+    .node-type.tuic {
+        background: rgba(168, 85, 247, 0.2);
+        color: #a855f7;
+    }
+
+    .node-type.vless-reality {
+        background: rgba(34, 197, 94, 0.2);
+        color: #22c55e;
+    }
+
+    .form-group small {
+        display: block;
+        margin-top: 0.25rem;
+        color: var(--text-secondary);
+        font-size: 0.75rem;
+    }
 </style>
 
 <script>
@@ -411,7 +452,7 @@
         if (!inbound) return;
 
         currentEditTag = tag;
-        document.getElementById('edit-tag-display').textContent = tag;
+        document.getElementById('edit-tag-input').value = tag;
         document.getElementById('edit-traffic-limit').value = inbound.traffic_limit || '';
         document.getElementById('edit-expire-date').value = inbound.expire_date || '';
         document.getElementById('edit-remark').value = inbound.remark || '';
@@ -424,15 +465,22 @@
     }
 
     async function saveInboundEdit() {
+        const newTag = document.getElementById('edit-tag-input').value.trim();
         const trafficLimit = document.getElementById('edit-traffic-limit').value;
         const expireDate = document.getElementById('edit-expire-date').value;
         const remark = document.getElementById('edit-remark').value;
+
+        if (!newTag) {
+            showToast('节点标签不能为空', 'error');
+            return;
+        }
 
         try {
             const response = await fetch(`/api/inbounds/${currentEditTag}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
+                    new_tag: newTag,
                     traffic_limit: trafficLimit ? parseFloat(trafficLimit) : null,
                     expire_date: expireDate || null,
                     remark: remark || ''
@@ -471,8 +519,9 @@
         </div>
         <div class="modal-body">
             <div class="form-group">
-                <label>节点标签</label>
-                <span class="value" id="edit-tag-display">--</span>
+                <label>节点标签 (名称)</label>
+                <input type="text" id="edit-tag-input" placeholder="节点名称">
+                <small>修改后会重新生成分享链接</small>
             </div>
             <div class="form-group">
                 <label>流量限制 (GB)</label>
