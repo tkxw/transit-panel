@@ -559,6 +559,35 @@ def api_delete_inbound(tag):
     
     return jsonify({'success': True})
 
+@app.route('/api/inbounds/<tag>', methods=['PUT'])
+@login_required
+def api_edit_inbound(tag):
+    """编辑入站配置 - 支持流量限制和截止日期"""
+    data = request.get_json()
+    config = load_config()
+    
+    # 查找入站
+    inbound_idx = None
+    for i, inbound in enumerate(config.get('inbounds', [])):
+        if inbound.get('tag') == tag:
+            inbound_idx = i
+            break
+    
+    if inbound_idx is None:
+        return jsonify({'success': False, 'error': f'入站 {tag} 不存在'})
+    
+    # 更新支持的字段
+    if 'traffic_limit' in data:
+        config['inbounds'][inbound_idx]['traffic_limit'] = data['traffic_limit']  # GB
+    if 'expire_date' in data:
+        config['inbounds'][inbound_idx]['expire_date'] = data['expire_date']  # YYYY-MM-DD
+    if 'remark' in data:
+        config['inbounds'][inbound_idx]['remark'] = data['remark']
+    
+    save_config(config)
+    
+    return jsonify({'success': True, 'data': config['inbounds'][inbound_idx]})
+
 # --- 出站 API ---
 @app.route('/api/outbounds')
 @login_required
@@ -977,6 +1006,48 @@ def api_delete_outbound(tag):
     
     return jsonify({'success': True})
 
+@app.route('/api/outbounds/<tag>', methods=['PUT'])
+@login_required
+def api_edit_outbound(tag):
+    """编辑出站配置"""
+    data = request.get_json()
+    config = load_config()
+    singbox_config = load_singbox_config()
+    
+    # 查找出站
+    outbound_idx = None
+    for i, outbound in enumerate(config.get('outbounds', [])):
+        if outbound.get('tag') == tag:
+            outbound_idx = i
+            break
+    
+    if outbound_idx is None:
+        return jsonify({'success': False, 'error': f'出站 {tag} 不存在'})
+    
+    # 更新支持的字段
+    updateable_fields = ['server', 'server_port', 'uuid', 'password', 'username', 'method', 'sni', 'remark']
+    for field in updateable_fields:
+        if field in data:
+            config['outbounds'][outbound_idx][field] = data[field]
+    
+    # 同步更新 singbox 配置
+    for i, outbound in enumerate(singbox_config.get('outbounds', [])):
+        if outbound.get('tag') == tag:
+            if 'server' in data:
+                singbox_config['outbounds'][i]['server'] = data['server']
+            if 'server_port' in data:
+                singbox_config['outbounds'][i]['server_port'] = int(data['server_port'])
+            if 'uuid' in data:
+                singbox_config['outbounds'][i]['uuid'] = data['uuid']
+            if 'password' in data:
+                singbox_config['outbounds'][i]['password'] = data['password']
+            break
+    
+    save_config(config)
+    save_singbox_config(singbox_config)
+    
+    return jsonify({'success': True, 'data': config['outbounds'][outbound_idx]})
+
 # --- 中转规则 API ---
 @app.route('/api/routes')
 @login_required
@@ -1112,6 +1183,8 @@ def api_update_config():
     
     if 'web_port' in data:
         config['panel']['web_port'] = int(data['web_port'])
+    if 'domain' in data:
+        config['panel']['domain'] = data['domain']
     
     save_config(config)
     return jsonify({'success': True})
