@@ -562,9 +562,10 @@ def api_delete_inbound(tag):
 @app.route('/api/inbounds/<tag>', methods=['PUT'])
 @login_required
 def api_edit_inbound(tag):
-    """编辑入站配置 - 支持流量限制和截止日期"""
+    """编辑入站配置 - 支持标签修改、流量限制和截止日期"""
     data = request.get_json()
     config = load_config()
+    singbox_config = load_singbox_config()
     
     # 查找入站
     inbound_idx = None
@@ -576,17 +577,63 @@ def api_edit_inbound(tag):
     if inbound_idx is None:
         return jsonify({'success': False, 'error': f'入站 {tag} 不存在'})
     
-    # 更新支持的字段
+    inbound = config['inbounds'][inbound_idx]
+    new_tag = data.get('new_tag', tag)
+    
+    # 如果标签改变，需要更新多处
+    if new_tag != tag:
+        # 更新 config.json 中的 tag
+        inbound['tag'] = new_tag
+        
+        # 更新 singbox.json 中的 tag
+        for sb_inbound in singbox_config.get('inbounds', []):
+            if sb_inbound.get('tag') == tag:
+                sb_inbound['tag'] = new_tag
+                break
+        
+        # 更新路由规则中的引用
+        for rule in singbox_config.get('route', {}).get('rules', []):
+            if tag in rule.get('inbound', []):
+                rule['inbound'] = [new_tag if x == tag else x for x in rule['inbound']]
+        
+        # 更新面板config中的路由
+        for route in config.get('routes', []):
+            if route.get('inbound') == tag:
+                route['inbound'] = new_tag
+        
+        # 重新生成分享链接
+        server_ip = config.get('panel', {}).get('server_ip', get_public_ip())
+        port = inbound.get('port')
+        protocol = inbound.get('type')
+        
+        if protocol == 'hysteria2':
+            password = inbound.get('password', '')
+            inbound['share_link'] = f'hy2://{password}@{server_ip}:{port}?insecure=1#{new_tag}'
+        elif protocol == 'tuic':
+            uuid = inbound.get('uuid', '')
+            password = inbound.get('password', '')
+            inbound['share_link'] = f'tuic://{uuid}:{password}@{server_ip}:{port}?congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=1#{new_tag}'
+        elif protocol == 'vless-reality':
+            uuid = inbound.get('uuid', '')
+            server_name = inbound.get('server_name', 'icloud.com')
+            public_key = inbound.get('public_key', '')
+            short_id = inbound.get('short_id', '')
+            inbound['share_link'] = f'vless://{uuid}@{server_ip}:{port}?type=tcp&security=reality&pbk={public_key}&fp=firefox&sni={server_name}&sid={short_id}&flow=xtls-rprx-vision#{new_tag}'
+    
+    # 更新其他字段
     if 'traffic_limit' in data:
-        config['inbounds'][inbound_idx]['traffic_limit'] = data['traffic_limit']  # GB
+        inbound['traffic_limit'] = data['traffic_limit']  # GB
     if 'expire_date' in data:
-        config['inbounds'][inbound_idx]['expire_date'] = data['expire_date']  # YYYY-MM-DD
+        inbound['expire_date'] = data['expire_date']  # YYYY-MM-DD
     if 'remark' in data:
-        config['inbounds'][inbound_idx]['remark'] = data['remark']
+        inbound['remark'] = data['remark']
     
     save_config(config)
+    if new_tag != tag:
+        save_singbox_config(singbox_config)
+        restart_service()
     
-    return jsonify({'success': True, 'data': config['inbounds'][inbound_idx]})
+    return jsonify({'success': True, 'data': inbound})
 
 # --- 出站 API ---
 @app.route('/api/outbounds')
@@ -1181,13 +1228,45 @@ def api_update_config():
     data = request.get_json()
     config = load_config()
     
+    old_port = config['panel'].get('web_port', 8080)
+    port_changed = False
+    
     if 'web_port' in data:
-        config['panel']['web_port'] = int(data['web_port'])
+        new_port = int(data['web_port'])
+        if new_port != old_port:
+            config['panel']['web_port'] = new_port
+            port_changed = True
+    
     if 'domain' in data:
         config['panel']['domain'] = data['domain']
     
     save_config(config)
-    return jsonify({'success': True})
+    
+    message = '配置已保存'
+    
+    # 如果端口改变，需要更新 systemd 服务文件
+    if port_changed:
+        try:
+            # 读取并更新 systemd 服务文件
+            service_path = '/etc/systemd/system/transit-panel-web.service'
+            if os.path.exists(service_path):
+                with open(service_path, 'r') as f:
+                    content = f.read()
+                
+                # 替换端口
+                import re
+                content = re.sub(r'-b 0\.0\.0\.0:\d+', f'-b 0.0.0.0:{new_port}', content)
+                
+                with open(service_path, 'w') as f:
+                    f.write(content)
+                
+                # 重新加载 systemd
+                subprocess.run(['systemctl', 'daemon-reload'], check=True)
+                message = f'端口已更新为 {new_port}，请手动重启 Web 服务或刷新页面后使用新端口访问'
+        except Exception as e:
+            message = f'端口配置已保存，但服务文件更新失败: {str(e)}，请手动修改 /etc/systemd/system/transit-panel-web.service'
+    
+    return jsonify({'success': True, 'message': message})
 
 # --- Clash 订阅链接 API ---
 @app.route('/api/subscribe/clash')
@@ -1219,7 +1298,10 @@ def api_clash_subscription():
                 'port': inbound.get('port'),
                 'uuid': inbound.get('uuid', ''),
                 'password': inbound.get('password', ''),
+                'congestion-controller': 'bbr',
+                'udp-relay-mode': 'native',
                 'alpn': ['h3'],
+                'sni': 'www.bing.com',
                 'skip-cert-verify': True
             }
         
