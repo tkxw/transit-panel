@@ -61,24 +61,24 @@
                 <div class="form-group">
                     <label>协议类型</label>
                     <select id="protocol" name="type" onchange="updateFormFields()">
+                        <option value="vless-reality" selected>VLESS + Reality (推荐)</option>
                         <option value="hysteria2">Hysteria2</option>
                         <option value="tuic">TUIC</option>
-                        <option value="vless-reality">VLESS + Reality</option>
                     </select>
                 </div>
 
                 <div class="form-group">
                     <label>入站标签</label>
-                    <input type="text" name="tag" id="tag" placeholder="例如: hy2-in">
+                    <input type="text" name="tag" id="tag" placeholder="例如: reality-in">
                 </div>
 
                 <div class="form-group">
-                    <label>监听端口</label>
-                    <input type="number" name="port" id="port" value="443" min="1" max="65535">
+                    <label>监听端口 (默认随机)</label>
+                    <input type="number" name="port" id="port" placeholder="留空随机生成" min="1" max="65535">
                 </div>
 
                 <!-- Hysteria2 专属字段 -->
-                <div class="protocol-fields" id="fields-hysteria2">
+                <div class="protocol-fields hidden" id="fields-hysteria2">
                     <div class="form-group">
                         <label>密码 (留空自动生成)</label>
                         <input type="text" name="password" placeholder="留空自动生成">
@@ -102,14 +102,14 @@
                 </div>
 
                 <!-- VLESS Reality 专属字段 -->
-                <div class="protocol-fields hidden" id="fields-vless-reality">
+                <div class="protocol-fields" id="fields-vless-reality">
                     <div class="form-group">
                         <label>UUID (留空自动生成)</label>
                         <input type="text" name="uuid_vless" placeholder="留空自动生成">
                     </div>
                     <div class="form-group">
-                        <label>伪装域名</label>
-                        <input type="text" name="server_name" value="www.microsoft.com">
+                        <label>SNI 伪装域名</label>
+                        <input type="text" name="server_name" value="icloud.com">
                     </div>
                 </div>
             </form>
