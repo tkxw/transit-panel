@@ -4,86 +4,171 @@
 
 {% block content %}
 <div class="page-header">
-    <h2>出站节点 (SOCKS5)</h2>
-    <button class="btn btn-primary" onclick="showAddModal()">+ 添加出站</button>
+    <h2>出站节点</h2>
+    <div class="header-actions">
+        <button class="btn btn-info" onclick="showParseModal()">📋 粘贴链接</button>
+        <button class="btn btn-primary" onclick="showAddModal()">+ 手动添加</button>
+    </div>
 </div>
 
 <!-- 出站列表 -->
-<div class="table-container">
-    <table class="data-table">
-        <thead>
-            <tr>
-                <th>标签</th>
-                <th>服务器</th>
-                <th>端口</th>
-                <th>认证</th>
-                <th>创建时间</th>
-                <th>操作</th>
-            </tr>
-        </thead>
-        <tbody id="outbounds-table">
-            {% for outbound in outbounds %}
-            <tr data-tag="{{ outbound.tag }}">
-                <td><span class="tag-badge">{{ outbound.tag }}</span></td>
-                <td>{{ outbound.server }}</td>
-                <td>{{ outbound.server_port }}</td>
-                <td>{{ '是' if outbound.username else '否' }}</td>
-                <td>{{ outbound.created_at[:10] if outbound.created_at else '-' }}</td>
-                <td>
-                    <button class="btn btn-sm btn-danger" onclick="deleteOutbound('{{ outbound.tag }}')">删除</button>
-                </td>
-            </tr>
-            {% else %}
-            <tr class="empty-row">
-                <td colspan="6">
-                    <div class="empty-state">
-                        <span class="empty-icon">📤</span>
-                        <p>暂无出站节点</p>
-                    </div>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+<div class="cards-grid" id="outbounds-list">
+    {% for outbound in outbounds %}
+    <div class="node-card" data-tag="{{ outbound.tag }}">
+        <div class="node-header">
+            <span class="node-type {{ outbound.type }}">{{ outbound.type.upper() }}</span>
+            <span class="node-tag">{{ outbound.tag }}</span>
+        </div>
+        <div class="node-body">
+            <div class="node-info">
+                <span class="label">服务器:</span>
+                <span class="value">{{ outbound.server }}</span>
+            </div>
+            <div class="node-info">
+                <span class="label">端口:</span>
+                <span class="value">{{ outbound.server_port }}</span>
+            </div>
+        </div>
+        <div class="node-actions">
+            <button class="btn btn-sm btn-secondary" onclick="showDetails('{{ outbound.tag }}')">详情</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteOutbound('{{ outbound.tag }}')">删除</button>
+        </div>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <span class="empty-icon">📤</span>
+        <p>暂无出站节点</p>
+        <button class="btn btn-primary" onclick="showAddModal()">添加第一个出站</button>
+    </div>
+    {% endfor %}
 </div>
 
-<!-- 添加出站弹窗 -->
+<!-- 链接解析弹窗 -->
+<div class="modal" id="parse-modal">
+    <div class="modal-content modal-lg">
+        <div class="modal-header">
+            <h3>粘贴链接解析</h3>
+            <button class="modal-close" onclick="closeParseModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label>粘贴节点链接 (支持多行)</label>
+                <textarea id="parse-links" rows="8" placeholder="支持的链接格式:
+vless://uuid@server:port?...#name
+vmess://Base64...
+trojan://password@server:port?...#name
+ss://...
+socks://user:pass@server:port
+hysteria2://...
+tuic://...
+
+每行一个链接"></textarea>
+            </div>
+            <div id="parse-result" class="parse-result hidden">
+                <h4>解析结果:</h4>
+                <div id="parse-list"></div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeParseModal()">取消</button>
+            <button class="btn btn-info" onclick="parseLinks()">解析</button>
+            <button class="btn btn-primary hidden" id="import-btn" onclick="importParsed()">导入选中</button>
+        </div>
+    </div>
+</div>
+
+<!-- 手动添加弹窗 -->
 <div class="modal" id="add-modal">
     <div class="modal-content">
         <div class="modal-header">
-            <h3>添加 SOCKS5 出站</h3>
+            <h3>添加出站</h3>
             <button class="modal-close" onclick="closeModal()">&times;</button>
         </div>
         <div class="modal-body">
             <form id="add-form">
                 <div class="form-group">
-                    <label>出站标签 <span class="required">*</span></label>
-                    <input type="text" name="tag" required placeholder="例如: proxy-1">
+                    <label>协议类型</label>
+                    <select id="protocol" name="type" onchange="updateOutboundFields()">
+                        <option value="vless">VLESS</option>
+                        <option value="vmess">VMess</option>
+                        <option value="trojan">Trojan</option>
+                        <option value="shadowsocks">Shadowsocks</option>
+                        <option value="socks">SOCKS5</option>
+                        <option value="hysteria2">Hysteria2</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>标签 *</label>
+                    <input type="text" name="tag" id="tag" placeholder="例如: proxy-1" required>
                 </div>
 
                 <div class="form-row">
                     <div class="form-group">
-                        <label>服务器地址 <span class="required">*</span></label>
-                        <input type="text" name="server" required placeholder="例如: 1.2.3.4">
+                        <label>服务器地址 *</label>
+                        <input type="text" name="server" placeholder="例如: 1.2.3.4" required>
                     </div>
                     <div class="form-group">
-                        <label>端口 <span class="required">*</span></label>
-                        <input type="number" name="port" required value="1080" min="1" max="65535">
+                        <label>端口 *</label>
+                        <input type="number" name="server_port" value="443" min="1" max="65535" required>
                     </div>
                 </div>
 
-                <div class="form-divider">
-                    <span>认证信息 (可选)</span>
+                <!-- VLESS/VMess/Trojan 公共字段 -->
+                <div class="protocol-fields" id="fields-uuid">
+                    <div class="form-group">
+                        <label>UUID *</label>
+                        <input type="text" name="uuid" placeholder="UUID">
+                    </div>
                 </div>
 
-                <div class="form-row">
+                <!-- Trojan/Hysteria2 密码 -->
+                <div class="protocol-fields hidden" id="fields-password">
                     <div class="form-group">
-                        <label>用户名</label>
-                        <input type="text" name="username" placeholder="可选">
+                        <label>密码 *</label>
+                        <input type="text" name="password_out" placeholder="密码">
+                    </div>
+                </div>
+
+                <!-- Shadowsocks -->
+                <div class="protocol-fields hidden" id="fields-ss">
+                    <div class="form-group">
+                        <label>加密方式</label>
+                        <select name="method">
+                            <option value="aes-256-gcm">aes-256-gcm</option>
+                            <option value="aes-128-gcm">aes-128-gcm</option>
+                            <option value="chacha20-ietf-poly1305">chacha20-ietf-poly1305</option>
+                            <option value="2022-blake3-aes-256-gcm">2022-blake3-aes-256-gcm</option>
+                        </select>
                     </div>
                     <div class="form-group">
                         <label>密码</label>
-                        <input type="password" name="password" placeholder="可选">
+                        <input type="text" name="ss_password" placeholder="密码">
+                    </div>
+                </div>
+
+                <!-- SOCKS5 -->
+                <div class="protocol-fields hidden" id="fields-socks">
+                    <div class="form-group">
+                        <label>用户名 (可选)</label>
+                        <input type="text" name="username" placeholder="可选">
+                    </div>
+                    <div class="form-group">
+                        <label>密码 (可选)</label>
+                        <input type="text" name="socks_password" placeholder="可选">
+                    </div>
+                </div>
+
+                <!-- TLS 设置 -->
+                <div class="protocol-fields" id="fields-tls">
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" name="tls" id="tls-enabled" checked> 启用 TLS
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label>SNI</label>
+                        <input type="text" name="sni" placeholder="留空自动">
                     </div>
                 </div>
             </form>
@@ -95,30 +180,238 @@
     </div>
 </div>
 
+<!-- 详情弹窗 -->
+<div class="modal" id="details-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>出站详情</h3>
+            <button class="modal-close" onclick="closeDetailsModal()">&times;</button>
+        </div>
+        <div class="modal-body" id="details-content">
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeDetailsModal()">关闭</button>
+        </div>
+    </div>
+</div>
+
+<style>
+    .header-actions {
+        display: flex;
+        gap: 0.5rem;
+    }
+
+    .modal-lg {
+        max-width: 700px;
+    }
+
+    textarea {
+        width: 100%;
+        padding: 0.75rem;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--bg-dark);
+        color: var(--text-primary);
+        font-family: monospace;
+        resize: vertical;
+    }
+
+    .parse-result {
+        margin-top: 1rem;
+        padding: 1rem;
+        background: var(--bg-dark);
+        border-radius: var(--radius);
+    }
+
+    .parse-item {
+        display: flex;
+        align-items: center;
+        padding: 0.5rem;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .parse-item:last-child {
+        border-bottom: none;
+    }
+
+    .parse-item input[type="checkbox"] {
+        margin-right: 0.75rem;
+    }
+
+    .parse-item .info {
+        flex: 1;
+    }
+
+    .parse-item .tag {
+        font-weight: bold;
+        color: var(--primary);
+    }
+
+    .parse-item .type {
+        font-size: 0.75rem;
+        background: var(--bg-card);
+        padding: 0.125rem 0.5rem;
+        border-radius: 0.25rem;
+        margin-left: 0.5rem;
+    }
+
+    .form-row {
+        display: grid;
+        grid-template-columns: 2fr 1fr;
+        gap: 1rem;
+    }
+</style>
+
 <script>
+    const outboundsData = {{ outbounds | tojson | safe }};
+    let parsedNodes = [];
+
     function showAddModal() {
         document.getElementById('add-modal').classList.add('active');
+        updateOutboundFields();
     }
 
     function closeModal() {
         document.getElementById('add-modal').classList.remove('active');
     }
 
+    function showParseModal() {
+        document.getElementById('parse-modal').classList.add('active');
+    }
+
+    function closeParseModal() {
+        document.getElementById('parse-modal').classList.remove('active');
+        document.getElementById('parse-links').value = '';
+        document.getElementById('parse-result').classList.add('hidden');
+        document.getElementById('import-btn').classList.add('hidden');
+        parsedNodes = [];
+    }
+
+    function updateOutboundFields() {
+        const protocol = document.getElementById('protocol').value;
+
+        // 隐藏所有
+        document.querySelectorAll('.protocol-fields').forEach(el => el.classList.add('hidden'));
+
+        // 根据协议显示对应字段
+        if (['vless', 'vmess'].includes(protocol)) {
+            document.getElementById('fields-uuid').classList.remove('hidden');
+            document.getElementById('fields-tls').classList.remove('hidden');
+        } else if (protocol === 'trojan') {
+            document.getElementById('fields-password').classList.remove('hidden');
+            document.getElementById('fields-tls').classList.remove('hidden');
+        } else if (protocol === 'shadowsocks') {
+            document.getElementById('fields-ss').classList.remove('hidden');
+        } else if (protocol === 'socks') {
+            document.getElementById('fields-socks').classList.remove('hidden');
+        } else if (protocol === 'hysteria2') {
+            document.getElementById('fields-password').classList.remove('hidden');
+            document.getElementById('fields-tls').classList.remove('hidden');
+        }
+    }
+
+    async function parseLinks() {
+        const text = document.getElementById('parse-links').value.trim();
+        if (!text) {
+            showToast('请输入链接', 'error');
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/outbounds/parse', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ links: text })
+            });
+
+            const result = await response.json();
+
+            if (result.success && result.data.length > 0) {
+                parsedNodes = result.data;
+                let html = '';
+                parsedNodes.forEach((node, i) => {
+                    html += `
+                    <div class="parse-item">
+                        <input type="checkbox" id="node-${i}" checked>
+                        <div class="info">
+                            <span class="tag">${node.tag}</span>
+                            <span class="type">${node.type}</span>
+                            <div class="server">${node.server}:${node.server_port}</div>
+                        </div>
+                    </div>`;
+                });
+                document.getElementById('parse-list').innerHTML = html;
+                document.getElementById('parse-result').classList.remove('hidden');
+                document.getElementById('import-btn').classList.remove('hidden');
+            } else {
+                showToast(result.error || '未能解析任何链接', 'error');
+            }
+        } catch (error) {
+            showToast('解析失败: ' + error, 'error');
+        }
+    }
+
+    async function importParsed() {
+        const selected = [];
+        parsedNodes.forEach((node, i) => {
+            const checkbox = document.getElementById(`node-${i}`);
+            if (checkbox && checkbox.checked) {
+                selected.push(node);
+            }
+        });
+
+        if (selected.length === 0) {
+            showToast('请选择要导入的节点', 'error');
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/outbounds/batch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ outbounds: selected })
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                showToast(`成功导入 ${result.count} 个节点`, 'success');
+                closeParseModal();
+                setTimeout(() => location.reload(), 500);
+            } else {
+                showToast(result.error || '导入失败', 'error');
+            }
+        } catch (error) {
+            showToast('导入失败', 'error');
+        }
+    }
+
     async function addOutbound() {
         const form = document.getElementById('add-form');
         const formData = new FormData(form);
+        const protocol = formData.get('type');
 
         const data = {
+            type: protocol,
             tag: formData.get('tag'),
             server: formData.get('server'),
-            port: formData.get('port'),
-            username: formData.get('username'),
-            password: formData.get('password')
+            server_port: parseInt(formData.get('server_port'))
         };
 
-        if (!data.tag || !data.server || !data.port) {
-            showToast('请填写必填项', 'error');
-            return;
+        if (['vless', 'vmess'].includes(protocol)) {
+            data.uuid = formData.get('uuid');
+            data.tls = document.getElementById('tls-enabled').checked;
+            data.sni = formData.get('sni');
+        } else if (protocol === 'trojan' || protocol === 'hysteria2') {
+            data.password = formData.get('password_out');
+            data.tls = document.getElementById('tls-enabled').checked;
+            data.sni = formData.get('sni');
+        } else if (protocol === 'shadowsocks') {
+            data.method = formData.get('method');
+            data.password = formData.get('ss_password');
+        } else if (protocol === 'socks') {
+            data.username = formData.get('username');
+            data.password = formData.get('socks_password');
         }
 
         try {
@@ -151,7 +444,7 @@
 
             if (result.success) {
                 showToast('删除成功', 'success');
-                document.querySelector(`tr[data-tag="${tag}"]`).remove();
+                document.querySelector(`[data-tag="${tag}"]`).remove();
             } else {
                 showToast(result.error || '删除失败', 'error');
             }
@@ -160,10 +453,31 @@
         }
     }
 
-    // URL 参数自动打开添加弹窗
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('add')) {
-        showAddModal();
+    function showDetails(tag) {
+        const outbound = outboundsData.find(o => o.tag === tag);
+        if (!outbound) return;
+
+        let html = `<div class="details-grid">`;
+        for (const [key, value] of Object.entries(outbound)) {
+            if (key !== 'created_at') {
+                html += `
+                <div class="detail-item">
+                    <span class="label">${key}:</span>
+                    <span class="value">${value}</span>
+                </div>`;
+            }
+        }
+        html += '</div>';
+
+        document.getElementById('details-content').innerHTML = html;
+        document.getElementById('details-modal').classList.add('active');
     }
+
+    function closeDetailsModal() {
+        document.getElementById('details-modal').classList.remove('active');
+    }
+
+    // 初始化
+    updateOutboundFields();
 </script>
 {% endblock %}
