@@ -4,6 +4,29 @@
 
 {% block content %}
 <div class="settings-page">
+    <!-- 面板配置 -->
+    <div class="card">
+        <div class="card-header">
+            <h2>面板配置</h2>
+        </div>
+        <div class="card-body">
+            <form id="panel-config-form" class="settings-form">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Web 端口</label>
+                        <input type="number" id="web-port" min="1024" max="65535" placeholder="当前端口">
+                        <small>修改后需重启服务生效</small>
+                    </div>
+                    <div class="form-group">
+                        <label>当前端口</label>
+                        <span class="value" id="current-port">--</span>
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary">保存配置</button>
+            </form>
+        </div>
+    </div>
+
     <!-- 服务管理 -->
     <div class="card">
         <div class="card-header">
@@ -42,6 +65,21 @@
         </div>
     </div>
 
+    <!-- 订阅导出 -->
+    <div class="card">
+        <div class="card-header">
+            <h2>订阅链接</h2>
+        </div>
+        <div class="card-body">
+            <p>Clash 订阅链接 (复制到 Clash 使用):</p>
+            <div class="sub-link-box">
+                <input type="text" id="clash-sub-link" readonly>
+                <button class="btn btn-info" onclick="copySubLink()">复制</button>
+            </div>
+            <small>包含所有入站节点的订阅链接</small>
+        </div>
+    </div>
+
     <!-- 日志查看 -->
     <div class="card">
         <div class="card-header">
@@ -60,7 +98,7 @@
         </div>
         <div class="card-body">
             <div class="about-info">
-                <p><strong>Transit Panel</strong> v1.0.0</p>
+                <p><strong>Transit Panel</strong> v1.1.0</p>
                 <p>基于 sing-box 的节点中转管理面板</p>
                 <p>
                     <a href="https://github.com/SagerNet/sing-box" target="_blank">sing-box</a> |
@@ -71,7 +109,63 @@
     </div>
 </div>
 
+<style>
+    .form-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+        align-items: end;
+    }
+
+    .form-group small {
+        display: block;
+        color: var(--text-secondary);
+        margin-top: 0.25rem;
+        font-size: 0.75rem;
+    }
+
+    .value {
+        font-size: 1.25rem;
+        font-weight: bold;
+        color: var(--primary);
+    }
+
+    .sub-link-box {
+        display: flex;
+        gap: 0.5rem;
+    }
+
+    .sub-link-box input {
+        flex: 1;
+        padding: 0.5rem;
+        background: var(--bg-dark);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        color: var(--text-primary);
+    }
+</style>
+
 <script>
+    // 加载当前配置
+    async function loadConfig() {
+        try {
+            const response = await fetch('/api/config');
+            const data = await response.json();
+            if (data.success) {
+                document.getElementById('current-port').textContent = data.data.web_port || '--';
+                document.getElementById('web-port').placeholder = data.data.web_port || '8080';
+
+                // 生成订阅链接
+                const protocol = location.protocol;
+                const host = location.hostname;
+                const port = data.data.web_port || location.port;
+                document.getElementById('clash-sub-link').value = `${protocol}//${host}:${port}/api/subscribe/clash`;
+            }
+        } catch (error) {
+            console.error('加载配置失败:', error);
+        }
+    }
+
     async function serviceAction(action) {
         try {
             const response = await fetch(`/api/service/${action}`, { method: 'POST' });
@@ -87,6 +181,34 @@
             showToast('操作失败', 'error');
         }
     }
+
+    document.getElementById('panel-config-form').addEventListener('submit', async function (e) {
+        e.preventDefault();
+
+        const port = document.getElementById('web-port').value;
+        if (!port) {
+            showToast('请输入端口', 'error');
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ web_port: parseInt(port) })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                showToast('配置已保存，请重启 Web 服务生效', 'success');
+            } else {
+                showToast(data.error || '保存失败', 'error');
+            }
+        } catch (error) {
+            showToast('保存失败', 'error');
+        }
+    });
 
     document.getElementById('password-form').addEventListener('submit', async function (e) {
         e.preventDefault();
@@ -124,6 +246,13 @@
         }
     });
 
+    function copySubLink() {
+        const input = document.getElementById('clash-sub-link');
+        input.select();
+        document.execCommand('copy');
+        showToast('订阅链接已复制', 'success');
+    }
+
     async function refreshLogs() {
         try {
             const response = await fetch('/api/logs');
@@ -137,7 +266,8 @@
         }
     }
 
-    // 页面加载时获取日志
+    // 页面加载
+    loadConfig();
     refreshLogs();
 </script>
 {% endblock %}
