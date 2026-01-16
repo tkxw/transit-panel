@@ -22,8 +22,67 @@ LOG_DIR = os.environ.get('LOG_DIR', '/var/log/transit-panel')
 SINGBOX_BIN = os.environ.get('SINGBOX_BIN', '/usr/local/bin/sing-box')
 
 app = Flask(__name__)
-app.secret_key = secrets.token_hex(32)
-app.permanent_session_lifetime = timedelta(hours=24)
+
+# ==================== Session 配置 ====================
+# 使用文件存储 session，解决 gunicorn 多进程不共享问题
+SESSION_DIR = os.path.join(DATA_DIR, 'sessions')
+os.makedirs(SESSION_DIR, exist_ok=True)
+
+# 持久化 secret key
+SECRET_KEY_FILE = os.path.join(DATA_DIR, '.secret_key')
+def get_secret_key():
+    if os.path.exists(SECRET_KEY_FILE):
+        with open(SECRET_KEY_FILE, 'r') as f:
+            return f.read().strip()
+    else:
+        key = secrets.token_hex(32)
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(SECRET_KEY_FILE, 'w') as f:
+            f.write(key)
+        os.chmod(SECRET_KEY_FILE, 0o600)
+        return key
+
+app.secret_key = get_secret_key()
+app.permanent_session_lifetime = timedelta(days=7)
+
+# Cookie 配置
+app.config.update(
+    SESSION_COOKIE_SECURE=False,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    SESSION_COOKIE_NAME='transit_session'
+)
+
+# 简单的文件 session 存储
+class FileSession:
+    def __init__(self, session_dir):
+        self.session_dir = session_dir
+    
+    def get(self, session_id):
+        path = os.path.join(self.session_dir, session_id)
+        if os.path.exists(path):
+            try:
+                with open(path, 'r') as f:
+                    data = json.load(f)
+                # 检查过期
+                if data.get('expires', 0) > datetime.now().timestamp():
+                    return data.get('data', {})
+            except:
+                pass
+        return {}
+    
+    def save(self, session_id, data, expires_days=7):
+        path = os.path.join(self.session_dir, session_id)
+        expires = (datetime.now() + timedelta(days=expires_days)).timestamp()
+        with open(path, 'w') as f:
+            json.dump({'data': data, 'expires': expires}, f)
+    
+    def delete(self, session_id):
+        path = os.path.join(self.session_dir, session_id)
+        if os.path.exists(path):
+            os.remove(path)
+
+file_session = FileSession(SESSION_DIR)
 
 # ==================== 工具函数 ====================
 def load_config():
@@ -278,8 +337,15 @@ def api_add_inbound():
     server_ip = config.get('panel', {}).get('server_ip', get_public_ip())
     cert_dir = os.path.join(CONFIG_DIR, 'certs')
     
-    tag = data.get('tag', f'{protocol}-in')
-    port = int(data.get('port', 443))
+    tag = data.get('tag') or f'{protocol}-in'
+    
+    # 随机端口 10000-60000
+    port_str = data.get('port', '')
+    if port_str and str(port_str).strip():
+        port = int(port_str)
+    else:
+        import random
+        port = random.randint(10000, 60000)
     
     # 检查标签是否已存在
     for inbound in config.get('inbounds', []):
@@ -337,8 +403,10 @@ def api_add_inbound():
         singbox_inbound.update({
             'users': [{'uuid': uuid, 'password': password}],
             'congestion_control': 'bbr',
+            'zero_rtt_handshake': False,
             'tls': {
                 'enabled': True,
+                'alpn': ['h3'],
                 'certificate_path': cert_path,
                 'key_path': key_path
             }
@@ -348,15 +416,18 @@ def api_add_inbound():
         
     elif protocol == 'vless-reality':
         uuid = data.get('uuid') or generate_uuid()
-        server_name = data.get('server_name', 'www.microsoft.com')
+        server_name = data.get('server_name', 'icloud.com')  # 默认 icloud.com
         private_key, public_key = generate_reality_keypair()
         short_id = secrets.token_hex(8)
+        fingerprint = 'firefox'  # 指纹
+        spider_x = '/'  # SpiderX
         
         panel_inbound.update({
             'uuid': uuid,
             'server_name': server_name,
             'public_key': public_key,
-            'short_id': short_id
+            'short_id': short_id,
+            'fingerprint': fingerprint
         })
         
         singbox_inbound.update({
@@ -373,7 +444,8 @@ def api_add_inbound():
             }
         })
         
-        share_link = f'vless://{uuid}@{server_ip}:{port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni={server_name}&fp=chrome&pbk={public_key}&sid={short_id}&type=tcp&headerType=none#{tag}'
+        # 分享链接包含 fingerprint 和 spiderX
+        share_link = f'vless://{uuid}@{server_ip}:{port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni={server_name}&fp={fingerprint}&pbk={public_key}&sid={short_id}&spx={spider_x}&type=tcp&headerType=none#{tag}'
     
     panel_inbound['share_link'] = share_link
     
