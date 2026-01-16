@@ -4,9 +4,53 @@
 
 {% block content %}
 <div class="dashboard">
-    <!-- 状态卡片 -->
+    <!-- 系统资源状态 -->
     <div class="stats-grid">
         <div class="stat-card">
+            <div class="stat-icon cpu">🖥️</div>
+            <div class="stat-info">
+                <span class="stat-label">CPU 使用率</span>
+                <span class="stat-value" id="cpu-usage">--</span>
+                <div class="progress-bar">
+                    <div class="progress-fill cpu" id="cpu-bar" style="width:0%"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon ram">💾</div>
+            <div class="stat-info">
+                <span class="stat-label">内存使用</span>
+                <span class="stat-value" id="ram-usage">--</span>
+                <div class="progress-bar">
+                    <div class="progress-fill ram" id="ram-bar" style="width:0%"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon disk">💿</div>
+            <div class="stat-info">
+                <span class="stat-label">硬盘使用</span>
+                <span class="stat-value" id="disk-usage">--</span>
+                <div class="progress-bar">
+                    <div class="progress-fill disk" id="disk-bar" style="width:0%"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon network">🌐</div>
+            <div class="stat-info">
+                <span class="stat-label">网络流量</span>
+                <span class="stat-value" id="network-usage">--</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 节点统计 -->
+    <div class="stats-grid small">
+        <div class="stat-card mini">
             <div class="stat-icon service {{ 'online' if service_running else 'offline' }}">
                 {{ '✓' if service_running else '✗' }}
             </div>
@@ -18,46 +62,27 @@
             </div>
         </div>
 
-        <div class="stat-card">
+        <div class="stat-card mini">
             <div class="stat-icon inbound">📥</div>
             <div class="stat-info">
-                <span class="stat-label">入站节点</span>
+                <span class="stat-label">入站</span>
                 <span class="stat-value">{{ inbound_count }}</span>
             </div>
         </div>
 
-        <div class="stat-card">
+        <div class="stat-card mini">
             <div class="stat-icon outbound">📤</div>
             <div class="stat-info">
-                <span class="stat-label">出站节点</span>
+                <span class="stat-label">出站</span>
                 <span class="stat-value">{{ outbound_count }}</span>
             </div>
         </div>
 
-        <div class="stat-card">
+        <div class="stat-card mini">
             <div class="stat-icon route">🔀</div>
             <div class="stat-info">
-                <span class="stat-label">中转规则</span>
+                <span class="stat-label">规则</span>
                 <span class="stat-value">{{ route_count }}</span>
-            </div>
-        </div>
-    </div>
-
-    <!-- 服务器信息 -->
-    <div class="card">
-        <div class="card-header">
-            <h2>服务器信息</h2>
-        </div>
-        <div class="card-body">
-            <div class="info-grid">
-                <div class="info-item">
-                    <span class="info-label">服务器 IP</span>
-                    <span class="info-value" id="server-ip">{{ server_ip }}</span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">面板端口</span>
-                    <span class="info-value">8080</span>
-                </div>
             </div>
         </div>
     </div>
@@ -83,6 +108,11 @@
         </div>
         <div class="card-body">
             <div class="quick-add-grid">
+                <a href="{{ url_for('inbounds') }}?add=vless-reality" class="quick-add-item">
+                    <span class="quick-add-icon">🔐</span>
+                    <span class="quick-add-title">VLESS Reality</span>
+                    <span class="quick-add-desc">高安全协议</span>
+                </a>
                 <a href="{{ url_for('inbounds') }}?add=hysteria2" class="quick-add-item">
                     <span class="quick-add-icon">🚀</span>
                     <span class="quick-add-title">Hysteria2</span>
@@ -93,15 +123,10 @@
                     <span class="quick-add-title">TUIC</span>
                     <span class="quick-add-desc">低延迟协议</span>
                 </a>
-                <a href="{{ url_for('inbounds') }}?add=vless-reality" class="quick-add-item">
-                    <span class="quick-add-icon">🔐</span>
-                    <span class="quick-add-title">VLESS Reality</span>
-                    <span class="quick-add-desc">高安全协议</span>
-                </a>
-                <a href="{{ url_for('outbounds') }}?add=socks" class="quick-add-item">
+                <a href="{{ url_for('outbounds') }}" class="quick-add-item">
                     <span class="quick-add-icon">🔌</span>
-                    <span class="quick-add-title">SOCKS5 出站</span>
-                    <span class="quick-add-desc">添加代理节点</span>
+                    <span class="quick-add-title">添加出站</span>
+                    <span class="quick-add-desc">代理节点</span>
                 </a>
             </div>
         </div>
@@ -109,6 +134,38 @@
 </div>
 
 <script>
+    // 获取系统状态
+    async function fetchSystemStats() {
+        try {
+            const response = await fetch('/api/system');
+            const data = await response.json();
+
+            if (data.success) {
+                const stats = data.data;
+
+                // CPU
+                document.getElementById('cpu-usage').textContent = stats.cpu + '%';
+                document.getElementById('cpu-bar').style.width = stats.cpu + '%';
+
+                // 内存
+                document.getElementById('ram-usage').textContent =
+                    `${stats.ram_used} / ${stats.ram_total} (${stats.ram_percent}%)`;
+                document.getElementById('ram-bar').style.width = stats.ram_percent + '%';
+
+                // 硬盘
+                document.getElementById('disk-usage').textContent =
+                    `${stats.disk_used} / ${stats.disk_total} (${stats.disk_percent}%)`;
+                document.getElementById('disk-bar').style.width = stats.disk_percent + '%';
+
+                // 网络
+                document.getElementById('network-usage').textContent =
+                    `↑ ${stats.net_sent} / ↓ ${stats.net_recv}`;
+            }
+        } catch (error) {
+            console.error('获取系统状态失败:', error);
+        }
+    }
+
     async function serviceAction(action) {
         try {
             const response = await fetch(`/api/service/${action}`, { method: 'POST' });
@@ -124,5 +181,65 @@
             showToast('操作失败', 'error');
         }
     }
+
+    // 初始化
+    fetchSystemStats();
+    // 每 5 秒刷新一次
+    setInterval(fetchSystemStats, 5000);
 </script>
+
+<style>
+    .stats-grid.small {
+        grid-template-columns: repeat(4, 1fr);
+        gap: 0.75rem;
+        margin-bottom: 1.5rem;
+    }
+
+    .stat-card.mini {
+        padding: 0.75rem 1rem;
+    }
+
+    .stat-card.mini .stat-icon {
+        width: 32px;
+        height: 32px;
+        font-size: 1rem;
+    }
+
+    .stat-card.mini .stat-value {
+        font-size: 1.25rem;
+    }
+
+    .progress-bar {
+        width: 100%;
+        height: 6px;
+        background: var(--bg-dark);
+        border-radius: 3px;
+        margin-top: 0.5rem;
+        overflow: hidden;
+    }
+
+    .progress-fill {
+        height: 100%;
+        border-radius: 3px;
+        transition: width 0.5s ease;
+    }
+
+    .progress-fill.cpu {
+        background: linear-gradient(90deg, #22c55e, #eab308);
+    }
+
+    .progress-fill.ram {
+        background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+    }
+
+    .progress-fill.disk {
+        background: linear-gradient(90deg, #6366f1, #ec4899);
+    }
+
+    @media (max-width: 768px) {
+        .stats-grid.small {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+</style>
 {% endblock %}
