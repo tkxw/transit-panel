@@ -62,7 +62,15 @@ async function apiRequest(url, options = {}) {
         return data;
     } catch (error) {
         console.error('API Error:', error);
-        showToast('请求失败，请检查网络', 'error');
+        // 检测是否是代理相关错误
+        if (error.message.includes('Failed to fetch') ||
+            error.message.includes('NetworkError') ||
+            error.message.includes('ERR_') ||
+            error.name === 'TypeError') {
+            showToast('网络请求失败，请关闭代理或切换其他节点后再试', 'error');
+        } else {
+            showToast('请求失败，请检查网络', 'error');
+        }
         return null;
     }
 }
