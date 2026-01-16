@@ -292,6 +292,92 @@ def api_status():
         }
     })
 
+@app.route('/api/system')
+@login_required
+def api_system():
+    """获取系统资源状态"""
+    def format_bytes(bytes_val):
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if bytes_val < 1024:
+                return f'{bytes_val:.1f} {unit}'
+            bytes_val /= 1024
+        return f'{bytes_val:.1f} PB'
+    
+    try:
+        # CPU 使用率
+        cpu_percent = 0
+        try:
+            with open('/proc/stat', 'r') as f:
+                line = f.readline()
+                parts = line.split()
+                if len(parts) >= 5:
+                    idle = int(parts[4])
+                    total = sum(int(x) for x in parts[1:])
+                    cpu_percent = (1 - idle / total) * 100 if total > 0 else 0
+        except:
+            cpu_percent = 0
+        
+        # 内存使用
+        ram_total = ram_used = ram_percent = 0
+        try:
+            with open('/proc/meminfo', 'r') as f:
+                meminfo = {}
+                for line in f:
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        meminfo[parts[0].rstrip(':')] = int(parts[1]) * 1024
+                ram_total = meminfo.get('MemTotal', 0)
+                ram_free = meminfo.get('MemAvailable', meminfo.get('MemFree', 0))
+                ram_used = ram_total - ram_free
+                ram_percent = (ram_used / ram_total * 100) if ram_total > 0 else 0
+        except:
+            pass
+        
+        # 硬盘使用
+        disk_total = disk_used = disk_percent = 0
+        try:
+            result = subprocess.run(['df', '-B1', '/'], capture_output=True, text=True)
+            lines = result.stdout.strip().split('\n')
+            if len(lines) >= 2:
+                parts = lines[1].split()
+                if len(parts) >= 5:
+                    disk_total = int(parts[1])
+                    disk_used = int(parts[2])
+                    disk_percent = float(parts[4].rstrip('%'))
+        except:
+            pass
+        
+        # 网络流量
+        net_sent = net_recv = 0
+        try:
+            with open('/proc/net/dev', 'r') as f:
+                for line in f.readlines()[2:]:
+                    parts = line.split()
+                    if len(parts) >= 10:
+                        iface = parts[0].rstrip(':')
+                        if iface not in ['lo']:
+                            net_recv += int(parts[1])
+                            net_sent += int(parts[9])
+        except:
+            pass
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'cpu': round(cpu_percent, 1),
+                'ram_total': format_bytes(ram_total),
+                'ram_used': format_bytes(ram_used),
+                'ram_percent': round(ram_percent, 1),
+                'disk_total': format_bytes(disk_total),
+                'disk_used': format_bytes(disk_used),
+                'disk_percent': round(disk_percent, 1),
+                'net_sent': format_bytes(net_sent),
+                'net_recv': format_bytes(net_recv)
+            }
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
 @app.route('/api/service/<action>', methods=['POST'])
 @login_required
 def api_service(action):
@@ -480,6 +566,359 @@ def api_outbounds():
     config = load_config()
     return jsonify({'success': True, 'data': config.get('outbounds', [])})
 
+def parse_proxy_link(link):
+    """解析代理链接 - 支持多种格式"""
+    import base64
+    import urllib.parse
+    import re
+    
+    link = link.strip()
+    if not link:
+        return None
+    
+    # VLESS: vless://uuid@server:port?params#name
+    if link.startswith('vless://'):
+        try:
+            match = link[8:]
+            if '@' not in match:
+                return None
+            uuid_part, rest = match.split('@', 1)
+            
+            # 处理 server:port 部分
+            if '?' in rest:
+                server_port, params = rest.split('?', 1)
+            elif '#' in rest:
+                server_port, params = rest.split('#', 1)
+                params = '#' + params
+            else:
+                server_port, params = rest, ''
+            
+            if ':' in server_port:
+                server, port = server_port.rsplit(':', 1)
+                port = re.sub(r'[^\d]', '', port)  # 移除非数字
+            else:
+                server, port = server_port, '443'
+            
+            name = urllib.parse.unquote(params.split('#')[-1]) if '#' in params else 'vless'
+            
+            return {
+                'type': 'vless',
+                'tag': name,
+                'server': server,
+                'server_port': int(port) if port else 443,
+                'uuid': uuid_part
+            }
+        except Exception as e:
+            print(f"VLESS 解析失败: {e}")
+            return None
+    
+    # VMess: vmess://base64...
+    elif link.startswith('vmess://'):
+        try:
+            b64_str = link[8:]
+            # 添加 padding
+            padding = 4 - len(b64_str) % 4
+            if padding != 4:
+                b64_str += '=' * padding
+            decoded = base64.b64decode(b64_str).decode('utf-8')
+            data = json.loads(decoded)
+            return {
+                'type': 'vmess',
+                'tag': data.get('ps', 'vmess'),
+                'server': data.get('add', ''),
+                'server_port': int(data.get('port', 443)),
+                'uuid': data.get('id', ''),
+                'alter_id': int(data.get('aid', 0))
+            }
+        except Exception as e:
+            print(f"VMess 解析失败: {e}")
+            return None
+    
+    # Trojan: trojan://password@server:port?params#name
+    elif link.startswith('trojan://'):
+        try:
+            match = link[9:]
+            if '@' not in match:
+                return None
+            password, rest = match.split('@', 1)
+            
+            server_port = rest.split('?')[0].split('#')[0]
+            name = urllib.parse.unquote(rest.split('#')[-1]) if '#' in rest else 'trojan'
+            
+            if ':' in server_port:
+                server, port = server_port.rsplit(':', 1)
+                port = re.sub(r'[^\d]', '', port)
+            else:
+                server, port = server_port, '443'
+            
+            return {
+                'type': 'trojan',
+                'tag': name,
+                'server': server,
+                'server_port': int(port) if port else 443,
+                'password': urllib.parse.unquote(password)
+            }
+        except Exception as e:
+            print(f"Trojan 解析失败: {e}")
+            return None
+    
+    # Shadowsocks: ss://base64@server:port#name 或 ss://base64#name
+    elif link.startswith('ss://'):
+        try:
+            match = link[5:]
+            if '#' in match:
+                main_part, name = match.rsplit('#', 1)
+                name = urllib.parse.unquote(name)
+            else:
+                main_part, name = match, 'ss'
+            
+            if '@' in main_part:
+                b64_part, server_part = main_part.split('@', 1)
+                padding = 4 - len(b64_part) % 4
+                if padding != 4:
+                    b64_part += '=' * padding
+                decoded = base64.b64decode(b64_part).decode('utf-8')
+                method, password = decoded.split(':', 1) if ':' in decoded else (decoded, '')
+                server, port = server_part.rsplit(':', 1) if ':' in server_part else (server_part, '443')
+            else:
+                padding = 4 - len(main_part) % 4
+                if padding != 4:
+                    main_part += '=' * padding
+                decoded = base64.b64decode(main_part).decode('utf-8')
+                method_pass, server_port = decoded.rsplit('@', 1)
+                method, password = method_pass.split(':', 1) if ':' in method_pass else (method_pass, '')
+                server, port = server_port.rsplit(':', 1) if ':' in server_port else (server_port, '443')
+            
+            port = re.sub(r'[^\d]', '', port)
+            
+            return {
+                'type': 'shadowsocks',
+                'tag': name,
+                'server': server,
+                'server_port': int(port) if port else 443,
+                'method': method,
+                'password': password
+            }
+        except Exception as e:
+            print(f"Shadowsocks 解析失败: {e}")
+            return None
+    
+    # SOCKS: socks://[user:pass@]server:port#name
+    elif link.startswith('socks://') or link.startswith('socks5://'):
+        try:
+            idx = 8 if link.startswith('socks://') else 9
+            match = link[idx:]
+            if '#' in match:
+                main_part, name = match.rsplit('#', 1)
+                name = urllib.parse.unquote(name)
+            else:
+                main_part, name = match, 'socks'
+            
+            username = password = ''
+            if '@' in main_part:
+                auth, server_part = main_part.rsplit('@', 1)
+                if ':' in auth:
+                    username, password = auth.split(':', 1)
+                else:
+                    username = auth
+            else:
+                server_part = main_part
+            
+            server, port = server_part.rsplit(':', 1) if ':' in server_part else (server_part, '1080')
+            port = re.sub(r'[^\d]', '', port)
+            
+            return {
+                'type': 'socks',
+                'tag': name,
+                'server': server,
+                'server_port': int(port) if port else 1080,
+                'username': username,
+                'password': password
+            }
+        except Exception as e:
+            print(f"SOCKS 解析失败: {e}")
+            return None
+    
+    # Hysteria2: hy2://auth@server:port?params#name
+    elif link.startswith('hy2://') or link.startswith('hysteria2://'):
+        try:
+            idx = 6 if link.startswith('hy2://') else 12
+            match = link[idx:]
+            
+            if '@' not in match:
+                return None
+            
+            auth, rest = match.split('@', 1)
+            
+            # 提取 server:port
+            server_port = rest.split('?')[0].split('#')[0]
+            
+            # 提取名称
+            name = 'hy2'
+            if '#' in rest:
+                name = urllib.parse.unquote(rest.split('#')[-1])
+            
+            # 解析 server 和 port
+            if ':' in server_port:
+                server, port = server_port.rsplit(':', 1)
+                port = re.sub(r'[^\d]', '', port)
+            else:
+                server, port = server_port, '443'
+            
+            return {
+                'type': 'hysteria2',
+                'tag': name,
+                'server': server,
+                'server_port': int(port) if port else 443,
+                'password': urllib.parse.unquote(auth)
+            }
+        except Exception as e:
+            print(f"Hysteria2 解析失败: {e}")
+            return None
+    
+    # TUIC: tuic://uuid:password@server:port?params#name
+    elif link.startswith('tuic://'):
+        try:
+            match = link[7:]
+            
+            if '@' not in match:
+                return None
+            
+            uuid_pass, rest = match.split('@', 1)
+            uuid, password = uuid_pass.split(':', 1) if ':' in uuid_pass else (uuid_pass, '')
+            
+            server_port = rest.split('?')[0].split('#')[0]
+            name = urllib.parse.unquote(rest.split('#')[-1]) if '#' in rest else 'tuic'
+            
+            if ':' in server_port:
+                server, port = server_port.rsplit(':', 1)
+                port = re.sub(r'[^\d]', '', port)
+            else:
+                server, port = server_port, '443'
+            
+            return {
+                'type': 'tuic',
+                'tag': name,
+                'server': server,
+                'server_port': int(port) if port else 443,
+                'uuid': uuid,
+                'password': urllib.parse.unquote(password)
+            }
+        except Exception as e:
+            print(f"TUIC 解析失败: {e}")
+            return None
+    
+    return None
+
+@app.route('/api/outbounds/parse', methods=['POST'])
+@login_required
+def api_parse_outbounds():
+    """解析代理链接"""
+    data = request.get_json()
+    links_text = data.get('links', '')
+    
+    results = []
+    for line in links_text.split('\n'):
+        line = line.strip()
+        if line:
+            parsed = parse_proxy_link(line)
+            if parsed:
+                results.append(parsed)
+    
+    return jsonify({'success': True, 'data': results})
+
+@app.route('/api/outbounds/batch', methods=['POST'])
+@login_required
+def api_batch_add_outbounds():
+    """批量添加出站"""
+    data = request.get_json()
+    outbounds_to_add = data.get('outbounds', [])
+    
+    config = load_config()
+    singbox_config = load_singbox_config()
+    
+    count = 0
+    existing_tags = {o.get('tag') for o in config.get('outbounds', [])}
+    
+    for outbound in outbounds_to_add:
+        tag = outbound.get('tag')
+        # 确保 tag 唯一
+        original_tag = tag
+        suffix = 1
+        while tag in existing_tags:
+            tag = f'{original_tag}-{suffix}'
+            suffix += 1
+        
+        outbound['tag'] = tag
+        outbound['created_at'] = datetime.now().isoformat()
+        
+        # Panel 配置
+        config.setdefault('outbounds', []).append(outbound)
+        
+        # Sing-box 配置
+        singbox_outbound = build_singbox_outbound(outbound)
+        if singbox_outbound:
+            singbox_config.setdefault('outbounds', []).append(singbox_outbound)
+            existing_tags.add(tag)
+            count += 1
+    
+    save_config(config)
+    save_singbox_config(singbox_config)
+    
+    return jsonify({'success': True, 'count': count})
+
+def build_singbox_outbound(data):
+    """构建 sing-box 出站配置"""
+    outbound_type = data.get('type')
+    tag = data.get('tag')
+    server = data.get('server')
+    port = data.get('server_port')
+    
+    if not all([outbound_type, tag, server, port]):
+        return None
+    
+    singbox_outbound = {
+        'type': outbound_type,
+        'tag': tag,
+        'server': server,
+        'server_port': port
+    }
+    
+    if outbound_type == 'vless':
+        singbox_outbound['uuid'] = data.get('uuid', '')
+        singbox_outbound['tls'] = {'enabled': True}
+    
+    elif outbound_type == 'vmess':
+        singbox_outbound['uuid'] = data.get('uuid', '')
+        singbox_outbound['alter_id'] = data.get('alter_id', 0)
+        singbox_outbound['security'] = 'auto'
+    
+    elif outbound_type == 'trojan':
+        singbox_outbound['password'] = data.get('password', '')
+        singbox_outbound['tls'] = {'enabled': True}
+    
+    elif outbound_type == 'shadowsocks':
+        singbox_outbound['method'] = data.get('method', 'aes-256-gcm')
+        singbox_outbound['password'] = data.get('password', '')
+    
+    elif outbound_type == 'socks':
+        if data.get('username'):
+            singbox_outbound['username'] = data.get('username')
+        if data.get('password'):
+            singbox_outbound['password'] = data.get('password')
+    
+    elif outbound_type == 'hysteria2':
+        singbox_outbound['password'] = data.get('password', '')
+        singbox_outbound['tls'] = {'enabled': True, 'insecure': True}
+    
+    elif outbound_type == 'tuic':
+        singbox_outbound['uuid'] = data.get('uuid', '')
+        singbox_outbound['password'] = data.get('password', '')
+        singbox_outbound['congestion_control'] = 'bbr'
+        singbox_outbound['tls'] = {'enabled': True, 'insecure': True}
+    
+    return singbox_outbound
+
 @app.route('/api/outbounds', methods=['POST'])
 @login_required
 def api_add_outbound():
@@ -487,9 +926,8 @@ def api_add_outbound():
     
     tag = data.get('tag')
     server = data.get('server')
-    port = int(data.get('port', 1080))
-    username = data.get('username', '')
-    password = data.get('password', '')
+    port = int(data.get('server_port', 443))
+    outbound_type = data.get('type', 'socks')
     
     if not tag or not server:
         return jsonify({'success': False, 'error': '标签和服务器地址必填'})
@@ -503,25 +941,19 @@ def api_add_outbound():
             return jsonify({'success': False, 'error': f'标签 {tag} 已存在'})
     
     panel_outbound = {
-        'type': 'socks',
+        'type': outbound_type,
         'tag': tag,
         'server': server,
         'server_port': port,
-        'username': username,
-        'password': password,
         'created_at': datetime.now().isoformat()
     }
     
-    singbox_outbound = {
-        'type': 'socks',
-        'tag': tag,
-        'server': server,
-        'server_port': port
-    }
+    # 根据类型添加字段
+    for key in ['uuid', 'password', 'username', 'method', 'alter_id']:
+        if data.get(key):
+            panel_outbound[key] = data.get(key)
     
-    if username and password:
-        singbox_outbound['username'] = username
-        singbox_outbound['password'] = password
+    singbox_outbound = build_singbox_outbound(panel_outbound)
     
     config.setdefault('outbounds', []).append(panel_outbound)
     singbox_config.setdefault('outbounds', []).append(singbox_outbound)
@@ -652,10 +1084,182 @@ def api_change_password():
     
     config = load_config()
     config['panel']['admin_pass_hash'] = hash_password(new_password)
+    config['panel']['admin_pass_plain'] = new_password
     save_config(config)
     
     return jsonify({'success': True})
 
+# --- 配置管理 API ---
+@app.route('/api/config')
+@login_required
+def api_get_config():
+    config = load_config()
+    panel = config.get('panel', {})
+    return jsonify({
+        'success': True,
+        'data': {
+            'web_port': panel.get('web_port', 8080),
+            'server_ip': panel.get('server_ip', ''),
+            'domain': panel.get('domain', '')
+        }
+    })
+
+@app.route('/api/config', methods=['POST'])
+@login_required
+def api_update_config():
+    data = request.get_json()
+    config = load_config()
+    
+    if 'web_port' in data:
+        config['panel']['web_port'] = int(data['web_port'])
+    
+    save_config(config)
+    return jsonify({'success': True})
+
+# --- Clash 订阅链接 API ---
+@app.route('/api/subscribe/clash')
+def api_clash_subscription():
+    """生成 Clash 订阅配置"""
+    config = load_config()
+    inbounds = config.get('inbounds', [])
+    server_ip = config.get('panel', {}).get('server_ip', get_public_ip())
+    
+    proxies = []
+    for inbound in inbounds:
+        proxy = None
+        
+        if inbound.get('type') == 'hysteria2':
+            proxy = {
+                'name': inbound.get('tag'),
+                'type': 'hysteria2',
+                'server': server_ip,
+                'port': inbound.get('port'),
+                'password': inbound.get('password', ''),
+                'skip-cert-verify': True
+            }
+        
+        elif inbound.get('type') == 'tuic':
+            proxy = {
+                'name': inbound.get('tag'),
+                'type': 'tuic',
+                'server': server_ip,
+                'port': inbound.get('port'),
+                'uuid': inbound.get('uuid', ''),
+                'password': inbound.get('password', ''),
+                'alpn': ['h3'],
+                'skip-cert-verify': True
+            }
+        
+        elif inbound.get('type') == 'vless-reality':
+            proxy = {
+                'name': inbound.get('tag'),
+                'type': 'vless',
+                'server': server_ip,
+                'port': inbound.get('port'),
+                'uuid': inbound.get('uuid', ''),
+                'network': 'tcp',
+                'tls': True,
+                'servername': inbound.get('server_name', 'icloud.com'),
+                'reality-opts': {
+                    'public-key': inbound.get('public_key', ''),
+                    'short-id': inbound.get('short_id', '')
+                },
+                'client-fingerprint': 'firefox'
+            }
+        
+        if proxy:
+            proxies.append(proxy)
+    
+    # 构建 Clash 配置
+    import yaml
+    
+    clash_config = {
+        'port': 7890,
+        'socks-port': 7891,
+        'allow-lan': False,
+        'mode': 'rule',
+        'log-level': 'info',
+        'proxies': proxies,
+        'proxy-groups': [
+            {
+                'name': '节点选择',
+                'type': 'select',
+                'proxies': [p['name'] for p in proxies] + ['DIRECT']
+            },
+            {
+                'name': '自动选择',
+                'type': 'url-test',
+                'proxies': [p['name'] for p in proxies],
+                'url': 'http://www.gstatic.com/generate_204',
+                'interval': 300
+            }
+        ] if proxies else [],
+        'rules': [
+            'GEOIP,CN,DIRECT',
+            'MATCH,节点选择'
+        ]
+    }
+    
+    from flask import Response
+    yaml_content = yaml.dump(clash_config, allow_unicode=True, default_flow_style=False)
+    return Response(yaml_content, mimetype='text/yaml', headers={'Content-Disposition': 'attachment; filename=clash_config.yaml'})
+
+# --- 二维码生成 API ---
+@app.route('/api/qrcode/<tag>')
+@login_required
+def api_qrcode(tag):
+    """生成节点二维码"""
+    config = load_config()
+    
+    # 查找入站
+    inbound = None
+    for i in config.get('inbounds', []):
+        if i.get('tag') == tag:
+            inbound = i
+            break
+    
+    if not inbound or not inbound.get('share_link'):
+        return jsonify({'success': False, 'error': '节点不存在或无分享链接'})
+    
+    try:
+        import qrcode
+        import io
+        import base64
+        
+        qr = qrcode.QRCode(version=1, box_size=10, border=2)
+        qr.add_data(inbound.get('share_link'))
+        qr.make(fit=True)
+        
+        img = qr.make_image(fill_color='black', back_color='white')
+        buffer = io.BytesIO()
+        img.save(buffer, format='PNG')
+        buffer.seek(0)
+        
+        # 返回 base64 编码的图片
+        img_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+        return jsonify({
+            'success': True,
+            'data': {
+                'qrcode': f'data:image/png;base64,{img_base64}',
+                'share_link': inbound.get('share_link')
+            }
+        })
+    except ImportError:
+        # 如果没有安装 qrcode 模块，返回使用第三方 API 生成的链接
+        import urllib.parse
+        share_link = inbound.get('share_link', '')
+        api_url = f'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={urllib.parse.quote(share_link)}'
+        return jsonify({
+            'success': True,
+            'data': {
+                'qrcode': api_url,
+                'share_link': share_link
+            }
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
 # ==================== 启动 ====================
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, debug=False)
+
