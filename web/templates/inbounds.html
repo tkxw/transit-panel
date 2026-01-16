@@ -39,6 +39,7 @@
             <button class="btn btn-sm btn-info" onclick="copyShareLink('{{ inbound.share_link }}')"
                 title="复制链接">📋</button>
             <button class="btn btn-sm btn-secondary" onclick="showDetails('{{ inbound.tag }}')" title="详情">🔍</button>
+            <button class="btn btn-sm btn-warning" onclick="showEditModal('{{ inbound.tag }}')" title="编辑">✏️</button>
             <button class="btn btn-sm btn-danger" onclick="deleteInbound('{{ inbound.tag }}')" title="删除">🗑️</button>
         </div>
     </div>
@@ -180,13 +181,18 @@
 
     .node-actions {
         display: flex;
-        gap: 0.25rem;
+        gap: 0.5rem;
         flex-wrap: wrap;
     }
 
     .node-actions .btn-sm {
-        min-width: 36px;
-        padding: 0.25rem 0.5rem;
+        min-width: 44px;
+        min-height: 44px;
+        padding: 0.5rem;
+        font-size: 1.3rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
     }
 </style>
 
@@ -398,6 +404,55 @@
         document.getElementById('details-modal').classList.remove('active');
     }
 
+    // 编辑入站
+    let currentEditTag = '';
+    function showEditModal(tag) {
+        const inbound = inboundsData.find(i => i.tag === tag);
+        if (!inbound) return;
+
+        currentEditTag = tag;
+        document.getElementById('edit-tag-display').textContent = tag;
+        document.getElementById('edit-traffic-limit').value = inbound.traffic_limit || '';
+        document.getElementById('edit-expire-date').value = inbound.expire_date || '';
+        document.getElementById('edit-remark').value = inbound.remark || '';
+        document.getElementById('edit-modal').classList.add('active');
+    }
+
+    function closeEditModal() {
+        document.getElementById('edit-modal').classList.remove('active');
+        currentEditTag = '';
+    }
+
+    async function saveInboundEdit() {
+        const trafficLimit = document.getElementById('edit-traffic-limit').value;
+        const expireDate = document.getElementById('edit-expire-date').value;
+        const remark = document.getElementById('edit-remark').value;
+
+        try {
+            const response = await fetch(`/api/inbounds/${currentEditTag}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    traffic_limit: trafficLimit ? parseFloat(trafficLimit) : null,
+                    expire_date: expireDate || null,
+                    remark: remark || ''
+                })
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                showToast('保存成功', 'success');
+                closeEditModal();
+                setTimeout(() => location.reload(), 500);
+            } else {
+                showToast(result.error || '保存失败', 'error');
+            }
+        } catch (error) {
+            showToast('网络请求失败，请关闭代理或切换其他节点后再试', 'error');
+        }
+    }
+
     // URL 参数自动打开添加弹窗
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('add')) {
@@ -406,4 +461,38 @@
         updateFormFields();
     }
 </script>
+
+<!-- 编辑入站弹窗 -->
+<div class="modal" id="edit-modal">
+    <div class="modal-content modal-sm">
+        <div class="modal-header">
+            <h3>编辑入站</h3>
+            <button class="modal-close" onclick="closeEditModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label>节点标签</label>
+                <span class="value" id="edit-tag-display">--</span>
+            </div>
+            <div class="form-group">
+                <label>流量限制 (GB)</label>
+                <input type="number" id="edit-traffic-limit" placeholder="留空不限制" min="0" step="0.1">
+                <small>超过限制后节点将不可用</small>
+            </div>
+            <div class="form-group">
+                <label>截止日期</label>
+                <input type="date" id="edit-expire-date">
+                <small>超过日期后节点将不可用</small>
+            </div>
+            <div class="form-group">
+                <label>备注</label>
+                <input type="text" id="edit-remark" placeholder="可选备注信息">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeEditModal()">取消</button>
+            <button class="btn btn-primary" onclick="saveInboundEdit()">保存</button>
+        </div>
+    </div>
+</div>
 {% endblock %}
