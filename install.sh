@@ -202,11 +202,28 @@ apply_ssl_cert() {
 }
 
 # ==================== 服务管理 ====================
+generate_self_signed_cert() {
+    log_info "生成自签名证书..."
+    local cert_path="$CONFIG_DIR/certs/panel.crt"
+    local key_path="$CONFIG_DIR/certs/panel.key"
+    
+    mkdir -p "$CONFIG_DIR/certs"
+    
+    openssl req -x509 -nodes -newkey rsa:2048 \
+        -keyout "$key_path" -out "$cert_path" \
+        -days 3650 -subj "/CN=Transit-Panel" 2>/dev/null
+    
+    chmod 600 "$key_path"
+    log_info "自签名证书生成完成"
+}
+
 create_services() {
     log_info "创建系统服务..."
-    local domain=$(jq -r '.panel.domain // ""' "$CONFIG_DIR/config.json" 2>/dev/null)
-    local use_ssl="false"
-    [ -n "$domain" ] && [ -f "$CONFIG_DIR/certs/panel.crt" ] && use_ssl="true"
+    
+    # 默认使用 HTTPS，如果没有证书则生成自签名证书
+    if [ ! -f "$CONFIG_DIR/certs/panel.crt" ]; then
+        generate_self_signed_cert
+    fi
     
     cat > /etc/systemd/system/transit-panel.service << EOFSVC1
 [Unit]
@@ -221,8 +238,8 @@ LimitNOFILE=infinity
 WantedBy=multi-user.target
 EOFSVC1
 
-    if [ "$use_ssl" = "true" ]; then
-        cat > /etc/systemd/system/transit-panel-web.service << EOFSVC2
+    # 始终使用 HTTPS
+    cat > /etc/systemd/system/transit-panel-web.service << EOFSVC2
 [Unit]
 Description=Transit Panel - Web (HTTPS)
 After=network.target
@@ -238,24 +255,6 @@ Restart=on-failure
 [Install]
 WantedBy=multi-user.target
 EOFSVC2
-    else
-        cat > /etc/systemd/system/transit-panel-web.service << EOFSVC2
-[Unit]
-Description=Transit Panel - Web
-After=network.target
-[Service]
-Type=simple
-WorkingDirectory=$INSTALL_DIR/web
-Environment="CONFIG_DIR=$CONFIG_DIR"
-Environment="DATA_DIR=$DATA_DIR"
-Environment="LOG_DIR=$LOG_DIR"
-Environment="SINGBOX_BIN=$SINGBOX_BIN"
-ExecStart=$INSTALL_DIR/venv/bin/gunicorn -b 0.0.0.0:$WEB_PORT -w 2 app:app
-Restart=on-failure
-[Install]
-WantedBy=multi-user.target
-EOFSVC2
-    fi
 
     systemctl daemon-reload
     systemctl enable transit-panel transit-panel-web
@@ -430,8 +429,9 @@ show_login_info() {
     if [ -n "$domain" ] && [ "$domain" != "null" ]; then
         echo -e "  访问地址: ${GREEN}https://$domain:$WEB_PORT${NC}"
     else
-        echo -e "  访问地址: ${GREEN}http://$server_ip:$WEB_PORT${NC}"
+        echo -e "  访问地址: ${GREEN}https://$server_ip:$WEB_PORT${NC}"
     fi
+    echo -e "  ${YELLOW}(自签名证书，浏览器会提示不安全，点击继续访问即可)${NC}"
     
     echo ""
     echo -e "  用户名: ${CYAN}admin${NC}"
