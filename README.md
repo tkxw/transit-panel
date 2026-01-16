@@ -35,23 +35,18 @@
 
 ---
 
-## 🚀 快速安装
-
-### 一键安装
+## 🚀 一键安装
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/您的用户名/transit-panel/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/tkxw/transit-panel/main/install.sh)
 ```
 
-### 手动安装
+安装完成后会显示访问地址和登录密码。
+
+### 卸载
 
 ```bash
-# 克隆仓库
-git clone https://github.com/您的用户名/transit-panel.git
-cd transit-panel
-
-# 安装
-sudo bash install.sh install
+bash <(curl -fsSL https://raw.githubusercontent.com/tkxw/transit-panel/main/install.sh) uninstall
 ```
 
 ---
