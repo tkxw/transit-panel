@@ -22,6 +22,11 @@
                         <span class="value" id="current-port">--</span>
                     </div>
                 </div>
+                <div class="form-group">
+                    <label>自定义域名</label>
+                    <input type="text" id="domain" placeholder="例如: example.com (留空使用 IP)">
+                    <small>设置后将用于生成分享链接和订阅地址</small>
+                </div>
                 <button type="submit" class="btn btn-primary">保存配置</button>
             </form>
         </div>
@@ -76,7 +81,12 @@
                 <input type="text" id="clash-sub-link" readonly>
                 <button class="btn btn-info" onclick="copySubLink()">复制</button>
             </div>
-            <small>包含所有入站节点的订阅链接</small>
+            <div class="sub-tips">
+                <small>⚠️ <strong>使用说明：</strong></small>
+                <small>• 由于使用自签名证书，导入时可能提示证书验证失败</small>
+                <small>• 请在 Clash 中开启「允许不安全连接」或使用支持跳过证书验证的客户端</small>
+                <small>• 导入订阅时请确保<strong>关闭代理</strong>，使用直连网络</small>
+            </div>
         </div>
     </div>
 
@@ -143,6 +153,25 @@
         border-radius: var(--radius);
         color: var(--text-primary);
     }
+
+    .sub-tips {
+        margin-top: 1rem;
+        padding: 0.75rem;
+        background: rgba(234, 179, 8, 0.1);
+        border: 1px solid rgba(234, 179, 8, 0.3);
+        border-radius: var(--radius);
+    }
+
+    .sub-tips small {
+        display: block;
+        color: var(--text-secondary);
+        font-size: 0.8rem;
+        line-height: 1.6;
+    }
+
+    .sub-tips small strong {
+        color: var(--warning);
+    }
 </style>
 
 <script>
@@ -154,10 +183,11 @@
             if (data.success) {
                 document.getElementById('current-port').textContent = data.data.web_port || '--';
                 document.getElementById('web-port').placeholder = data.data.web_port || '8080';
+                document.getElementById('domain').value = data.data.domain || '';
 
                 // 生成订阅链接
                 const protocol = location.protocol;
-                const host = location.hostname;
+                const host = data.data.domain || location.hostname;
                 const port = data.data.web_port || location.port;
                 document.getElementById('clash-sub-link').value = `${protocol}//${host}:${port}/api/subscribe/clash`;
             }
@@ -186,27 +216,29 @@
         e.preventDefault();
 
         const port = document.getElementById('web-port').value;
-        if (!port) {
-            showToast('请输入端口', 'error');
-            return;
-        }
+        const domain = document.getElementById('domain').value.trim();
+
+        const configData = {};
+        if (port) configData.web_port = parseInt(port);
+        configData.domain = domain;
 
         try {
             const response = await fetch('/api/config', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ web_port: parseInt(port) })
+                body: JSON.stringify(configData)
             });
 
             const data = await response.json();
 
             if (data.success) {
-                showToast('配置已保存，请重启 Web 服务生效', 'success');
+                showToast('配置已保存', 'success');
+                loadConfig();
             } else {
                 showToast(data.error || '保存失败', 'error');
             }
         } catch (error) {
-            showToast('保存失败', 'error');
+            showToast('网络请求失败，请关闭代理或切换其他节点后再试', 'error');
         }
     });
 
