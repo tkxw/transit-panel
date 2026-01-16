@@ -6,8 +6,6 @@
 # 用法: bash <(curl -fsSL https://raw.githubusercontent.com/tkxw/transit-panel/main/install.sh)
 #
 
-set -e
-
 # ==================== 配置 ====================
 PANEL_VERSION="1.0.0"
 PANEL_NAME="Transit Panel"
@@ -35,7 +33,10 @@ log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 check_root() {
-    [[ $EUID -ne 0 ]] && { log_error "请使用 root 权限运行"; exit 1; }
+    if [ "$EUID" -ne 0 ]; then
+        log_error "请使用 root 权限运行"
+        exit 1
+    fi
 }
 
 detect_os() {
@@ -54,7 +55,10 @@ detect_arch() {
     case $ARCH in
         x86_64) ARCH="amd64" ;;
         aarch64) ARCH="arm64" ;;
-        *) log_error "不支持的架构: $ARCH"; exit 1 ;;
+        *)
+            log_error "不支持的架构: $ARCH"
+            exit 1
+            ;;
     esac
     log_info "架构: $ARCH"
 }
@@ -67,19 +71,28 @@ install_deps() {
             apt-get install -y curl wget jq openssl unzip python3 python3-pip python3-venv
             ;;
         centos|rhel|fedora|rocky|almalinux)
-            yum install -y curl wget jq openssl unzip python3 python3-pip || \
+            yum install -y curl wget jq openssl unzip python3 python3-pip 2>/dev/null || \
             dnf install -y curl wget jq openssl unzip python3 python3-pip
             ;;
         alpine)
             apk add curl wget jq openssl unzip python3 py3-pip bash
             ;;
+        *)
+            log_warn "未知系统，跳过依赖安装"
+            ;;
     esac
+    log_info "依赖安装完成"
 }
 
 download_singbox() {
-    log_info "下载 sing-box..."
+    log_info "下载 sing-box v${SINGBOX_VERSION}..."
     local url="https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-linux-${ARCH}.tar.gz"
-    curl -L -o /tmp/sing-box.tar.gz "$url"
+    
+    if ! curl -L -o /tmp/sing-box.tar.gz "$url"; then
+        log_error "下载 sing-box 失败"
+        exit 1
+    fi
+    
     tar -xzf /tmp/sing-box.tar.gz -C /tmp/
     mv "/tmp/sing-box-${SINGBOX_VERSION}-linux-${ARCH}/sing-box" "$SINGBOX_BIN"
     chmod +x "$SINGBOX_BIN"
@@ -88,6 +101,7 @@ download_singbox() {
 }
 
 create_dirs() {
+    log_info "创建目录..."
     mkdir -p "$INSTALL_DIR/web/static/css"
     mkdir -p "$INSTALL_DIR/web/static/js"
     mkdir -p "$INSTALL_DIR/web/templates"
@@ -99,14 +113,10 @@ create_dirs() {
 download_web_files() {
     log_info "下载 Web 面板文件..."
     
-    # 下载 Python 后端
-    curl -fsSL "$GITHUB_RAW/web/app.py" -o "$INSTALL_DIR/web/app.py"
+    curl -fsSL "$GITHUB_RAW/web/app.py" -o "$INSTALL_DIR/web/app.py" || log_error "下载 app.py 失败"
+    curl -fsSL "$GITHUB_RAW/web/static/css/style.css" -o "$INSTALL_DIR/web/static/css/style.css" || log_error "下载 style.css 失败"
+    curl -fsSL "$GITHUB_RAW/web/static/js/app.js" -o "$INSTALL_DIR/web/static/js/app.js" || log_error "下载 app.js 失败"
     
-    # 下载静态文件
-    curl -fsSL "$GITHUB_RAW/web/static/css/style.css" -o "$INSTALL_DIR/web/static/css/style.css"
-    curl -fsSL "$GITHUB_RAW/web/static/js/app.js" -o "$INSTALL_DIR/web/static/js/app.js"
-    
-    # 下载模板
     curl -fsSL "$GITHUB_RAW/web/templates/base.html" -o "$INSTALL_DIR/web/templates/base.html"
     curl -fsSL "$GITHUB_RAW/web/templates/login.html" -o "$INSTALL_DIR/web/templates/login.html"
     curl -fsSL "$GITHUB_RAW/web/templates/dashboard.html" -o "$INSTALL_DIR/web/templates/dashboard.html"
@@ -121,58 +131,58 @@ download_web_files() {
 setup_python() {
     log_info "配置 Python 环境..."
     python3 -m venv "$INSTALL_DIR/venv"
-    source "$INSTALL_DIR/venv/bin/activate"
-    pip install --upgrade pip
-    pip install flask gunicorn
-    deactivate
+    "$INSTALL_DIR/venv/bin/pip" install --upgrade pip
+    "$INSTALL_DIR/venv/bin/pip" install flask gunicorn
+    log_info "Python 环境配置完成"
 }
 
-generate_password() { openssl rand -base64 16 | tr -d '=' | head -c 16; }
+generate_password() {
+    openssl rand -base64 16 | tr -d '=' | head -c 16
+}
 
 get_public_ip() {
     curl -s -4 --max-time 5 https://api.ipify.org 2>/dev/null || \
-    curl -s -4 --max-time 5 https://ifconfig.me 2>/dev/null || echo "127.0.0.1"
+    curl -s -4 --max-time 5 https://ifconfig.me 2>/dev/null || \
+    echo "127.0.0.1"
 }
 
 init_config() {
     log_info "初始化配置..."
-    local admin_pass=$(generate_password)
-    local admin_hash=$(echo -n "$admin_pass" | sha256sum | awk '{print $1}')
-    local server_ip=$(get_public_ip)
+    ADMIN_PASS=$(generate_password)
+    local admin_hash=$(echo -n "$ADMIN_PASS" | sha256sum | awk '{print $1}')
+    SERVER_IP=$(get_public_ip)
     
-    cat > "$CONFIG_DIR/config.json" << EOF
+    cat > "$CONFIG_DIR/config.json" << EOFCONFIG
 {
     "panel": {
         "version": "$PANEL_VERSION",
         "admin_user": "admin",
         "admin_pass_hash": "$admin_hash",
-        "server_ip": "$server_ip",
+        "server_ip": "$SERVER_IP",
         "web_port": $WEB_PORT
     },
     "inbounds": [],
     "outbounds": [],
     "routes": []
 }
-EOF
+EOFCONFIG
 
-    cat > "$CONFIG_DIR/singbox.json" << EOF
+    cat > "$CONFIG_DIR/singbox.json" << EOFSINGBOX
 {
     "log": {"level": "info", "timestamp": true, "output": "$LOG_DIR/singbox.log"},
     "inbounds": [],
     "outbounds": [{"type": "direct", "tag": "direct"}],
     "route": {"rules": [], "final": "direct"}
 }
-EOF
+EOFSINGBOX
 
-    # 保存登录信息
-    ADMIN_PASS="$admin_pass"
-    SERVER_IP="$server_ip"
+    log_info "配置初始化完成"
 }
 
 create_services() {
     log_info "创建系统服务..."
     
-    cat > /etc/systemd/system/transit-panel.service << EOF
+    cat > /etc/systemd/system/transit-panel.service << EOFSVC1
 [Unit]
 Description=Transit Panel - sing-box
 After=network.target
@@ -183,9 +193,9 @@ Restart=on-failure
 LimitNOFILE=infinity
 [Install]
 WantedBy=multi-user.target
-EOF
+EOFSVC1
 
-    cat > /etc/systemd/system/transit-panel-web.service << EOF
+    cat > /etc/systemd/system/transit-panel-web.service << EOFSVC2
 [Unit]
 Description=Transit Panel - Web
 After=network.target
@@ -200,11 +210,12 @@ ExecStart=$INSTALL_DIR/venv/bin/gunicorn -b 0.0.0.0:$WEB_PORT -w 2 app:app
 Restart=on-failure
 [Install]
 WantedBy=multi-user.target
-EOF
+EOFSVC2
 
     systemctl daemon-reload
     systemctl enable transit-panel transit-panel-web
     systemctl start transit-panel transit-panel-web
+    log_info "服务启动完成"
 }
 
 show_result() {
