@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+
+{% block page_title %}中转规则{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h2>中转规则</h2>
+    <button class="btn btn-primary" onclick="showAddModal()">+ 添加规则</button>
+</div>
+
+<!-- 规则列表 -->
+<div class="cards-grid" id="routes-list">
+    {% for route in routes %}
+    <div class="route-card" data-name="{{ route.name }}">
+        <div class="route-header">
+            <span class="route-type {{ route.type }}">
+                {{ '一对一' if route.type == 'one-to-one' else '一对多' }}
+            </span>
+            <span class="route-name">{{ route.name }}</span>
+        </div>
+        <div class="route-body">
+            <div class="route-flow">
+                <div class="route-node inbound">
+                    <span class="node-icon">📥</span>
+                    <span class="node-name">{{ route.inbound }}</span>
+                </div>
+                <div class="route-arrow">→</div>
+                <div class="route-node outbound">
+                    <span class="node-icon">📤</span>
+                    {% if route.type == 'one-to-one' %}
+                    <span class="node-name">{{ route.outbound }}</span>
+                    {% else %}
+                    <span class="node-name">{{ route.outbounds | join(', ') }}</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        <div class="route-actions">
+            <button class="btn btn-sm btn-danger" onclick="deleteRoute('{{ route.name }}')">删除</button>
+        </div>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <span class="empty-icon">🔀</span>
+        <p>暂无中转规则</p>
+        <button class="btn btn-primary" onclick="showAddModal()">添加第一条规则</button>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- 添加规则弹窗 -->
+<div class="modal" id="add-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>添加中转规则</h3>
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="add-form">
+                <div class="form-group">
+                    <label>规则类型</label>
+                    <select name="type" id="route-type" onchange="updateRouteForm()">
+                        <option value="one-to-one">一对一 (单入站 → 单出站)</option>
+                        <option value="one-to-many">一对多 (负载均衡)</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>规则名称</label>
+                    <input type="text" name="name" id="route-name" placeholder="留空自动生成">
+                </div>
+
+                <div class="form-group">
+                    <label>选择入站 <span class="required">*</span></label>
+                    <select name="inbound" id="inbound-select" required>
+                        <option value="">-- 选择入站 --</option>
+                        {% for inbound in inbounds %}
+                        <option value="{{ inbound.tag }}">{{ inbound.tag }} ({{ inbound.type }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- 一对一: 单选出站 -->
+                <div class="form-group" id="single-outbound">
+                    <label>选择出站 <span class="required">*</span></label>
+                    <select name="outbound" id="outbound-select">
+                        <option value="">-- 选择出站 --</option>
+                        {% for outbound in outbounds %}
+                        <option value="{{ outbound.tag }}">{{ outbound.tag }} ({{ outbound.server }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- 一对多: 多选出站 -->
+                <div class="form-group hidden" id="multi-outbound">
+                    <label>选择多个出站 <span class="required">*</span></label>
+                    <div class="checkbox-group" id="outbounds-checkboxes">
+                        {% for outbound in outbounds %}
+                        <label class="checkbox-item">
+                            <input type="checkbox" name="outbounds" value="{{ outbound.tag }}">
+                            <span>{{ outbound.tag }} ({{ outbound.server }})</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+            </form>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal()">取消</button>
+            <button class="btn btn-primary" onclick="addRoute()">添加</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    function showAddModal() {
+        document.getElementById('add-modal').classList.add('active');
+    }
+
+    function closeModal() {
+        document.getElementById('add-modal').classList.remove('active');
+    }
+
+    function updateRouteForm() {
+        const type = document.getElementById('route-type').value;
+        if (type === 'one-to-one') {
+            document.getElementById('single-outbound').classList.remove('hidden');
+            document.getElementById('multi-outbound').classList.add('hidden');
+        } else {
+            document.getElementById('single-outbound').classList.add('hidden');
+            document.getElementById('multi-outbound').classList.remove('hidden');
+        }
+    }
+
+    async function addRoute() {
+        const form = document.getElementById('add-form');
+        const formData = new FormData(form);
+        const type = formData.get('type');
+
+        const data = {
+            type: type,
+            name: formData.get('name'),
+            inbound: formData.get('inbound')
+        };
+
+        if (!data.inbound) {
+            showToast('请选择入站', 'error');
+            return;
+        }
+
+        if (type === 'one-to-one') {
+            data.outbound = formData.get('outbound');
+            if (!data.outbound) {
+                showToast('请选择出站', 'error');
+                return;
+            }
+        } else {
+            const checkboxes = document.querySelectorAll('input[name="outbounds"]:checked');
+            data.outbounds = Array.from(checkboxes).map(cb => cb.value);
+            if (data.outbounds.length < 2) {
+                showToast('请至少选择2个出站', 'error');
+                return;
+            }
+        }
+
+        try {
+            const response = await fetch('/api/routes', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                showToast('规则添加成功', 'success');
+                closeModal();
+                setTimeout(() => location.reload(), 500);
+            } else {
+                showToast(result.error || '添加失败', 'error');
+            }
+        } catch (error) {
+            showToast('添加失败', 'error');
+        }
+    }
+
+    async function deleteRoute(name) {
+        if (!confirm(`确定删除规则 ${name}?`)) return;
+
+        try {
+            const response = await fetch(`/api/routes/${encodeURIComponent(name)}`, { method: 'DELETE' });
+            const result = await response.json();
+
+            if (result.success) {
+                showToast('删除成功', 'success');
+                document.querySelector(`[data-name="${name}"]`).remove();
+            } else {
+                showToast(result.error || '删除失败', 'error');
+            }
+        } catch (error) {
+            showToast('删除失败', 'error');
+        }
+    }
+</script>
+{% endblock %}

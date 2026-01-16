@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+
+{% block page_title %}出站管理{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h2>出站节点 (SOCKS5)</h2>
+    <button class="btn btn-primary" onclick="showAddModal()">+ 添加出站</button>
+</div>
+
+<!-- 出站列表 -->
+<div class="table-container">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>标签</th>
+                <th>服务器</th>
+                <th>端口</th>
+                <th>认证</th>
+                <th>创建时间</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody id="outbounds-table">
+            {% for outbound in outbounds %}
+            <tr data-tag="{{ outbound.tag }}">
+                <td><span class="tag-badge">{{ outbound.tag }}</span></td>
+                <td>{{ outbound.server }}</td>
+                <td>{{ outbound.server_port }}</td>
+                <td>{{ '是' if outbound.username else '否' }}</td>
+                <td>{{ outbound.created_at[:10] if outbound.created_at else '-' }}</td>
+                <td>
+                    <button class="btn btn-sm btn-danger" onclick="deleteOutbound('{{ outbound.tag }}')">删除</button>
+                </td>
+            </tr>
+            {% else %}
+            <tr class="empty-row">
+                <td colspan="6">
+                    <div class="empty-state">
+                        <span class="empty-icon">📤</span>
+                        <p>暂无出站节点</p>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- 添加出站弹窗 -->
+<div class="modal" id="add-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>添加 SOCKS5 出站</h3>
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="add-form">
+                <div class="form-group">
+                    <label>出站标签 <span class="required">*</span></label>
+                    <input type="text" name="tag" required placeholder="例如: proxy-1">
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>服务器地址 <span class="required">*</span></label>
+                        <input type="text" name="server" required placeholder="例如: 1.2.3.4">
+                    </div>
+                    <div class="form-group">
+                        <label>端口 <span class="required">*</span></label>
+                        <input type="number" name="port" required value="1080" min="1" max="65535">
+                    </div>
+                </div>
+
+                <div class="form-divider">
+                    <span>认证信息 (可选)</span>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>用户名</label>
+                        <input type="text" name="username" placeholder="可选">
+                    </div>
+                    <div class="form-group">
+                        <label>密码</label>
+                        <input type="password" name="password" placeholder="可选">
+                    </div>
+                </div>
+            </form>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal()">取消</button>
+            <button class="btn btn-primary" onclick="addOutbound()">添加</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    function showAddModal() {
+        document.getElementById('add-modal').classList.add('active');
+    }
+
+    function closeModal() {
+        document.getElementById('add-modal').classList.remove('active');
+    }
+
+    async function addOutbound() {
+        const form = document.getElementById('add-form');
+        const formData = new FormData(form);
+
+        const data = {
+            tag: formData.get('tag'),
+            server: formData.get('server'),
+            port: formData.get('port'),
+            username: formData.get('username'),
+            password: formData.get('password')
+        };
+
+        if (!data.tag || !data.server || !data.port) {
+            showToast('请填写必填项', 'error');
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/outbounds', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                showToast('出站添加成功', 'success');
+                closeModal();
+                setTimeout(() => location.reload(), 500);
+            } else {
+                showToast(result.error || '添加失败', 'error');
+            }
+        } catch (error) {
+            showToast('添加失败', 'error');
+        }
+    }
+
+    async function deleteOutbound(tag) {
+        if (!confirm(`确定删除出站 ${tag}?`)) return;
+
+        try {
+            const response = await fetch(`/api/outbounds/${tag}`, { method: 'DELETE' });
+            const result = await response.json();
+
+            if (result.success) {
+                showToast('删除成功', 'success');
+                document.querySelector(`tr[data-tag="${tag}"]`).remove();
+            } else {
+                showToast(result.error || '删除失败', 'error');
+            }
+        } catch (error) {
+            showToast('删除失败', 'error');
+        }
+    }
+
+    // URL 参数自动打开添加弹窗
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('add')) {
+        showAddModal();
+    }
+</script>
+{% endblock %}

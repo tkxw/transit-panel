@@ -1,0 +1,330 @@
+{% extends "base.html" %}
+
+{% block page_title %}入站管理{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h2>入站节点</h2>
+    <button class="btn btn-primary" onclick="showAddModal()">+ 添加入站</button>
+</div>
+
+<!-- 入站列表 -->
+<div class="cards-grid" id="inbounds-list">
+    {% for inbound in inbounds %}
+    <div class="node-card" data-tag="{{ inbound.tag }}">
+        <div class="node-header">
+            <span class="node-type {{ inbound.type }}">{{ inbound.type.upper() }}</span>
+            <span class="node-tag">{{ inbound.tag }}</span>
+        </div>
+        <div class="node-body">
+            <div class="node-info">
+                <span class="label">端口:</span>
+                <span class="value">{{ inbound.port }}</span>
+            </div>
+            {% if inbound.password %}
+            <div class="node-info">
+                <span class="label">密码:</span>
+                <span class="value password">{{ inbound.password[:8] }}...</span>
+            </div>
+            {% endif %}
+            {% if inbound.uuid %}
+            <div class="node-info">
+                <span class="label">UUID:</span>
+                <span class="value uuid">{{ inbound.uuid[:8] }}...</span>
+            </div>
+            {% endif %}
+        </div>
+        <div class="node-actions">
+            <button class="btn btn-sm btn-info" onclick="copyShareLink('{{ inbound.share_link }}')">复制链接</button>
+            <button class="btn btn-sm btn-secondary" onclick="showDetails('{{ inbound.tag }}')">详情</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteInbound('{{ inbound.tag }}')">删除</button>
+        </div>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <span class="empty-icon">📥</span>
+        <p>暂无入站节点</p>
+        <button class="btn btn-primary" onclick="showAddModal()">添加第一个入站</button>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- 添加入站弹窗 -->
+<div class="modal" id="add-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>添加入站</h3>
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="add-form">
+                <div class="form-group">
+                    <label>协议类型</label>
+                    <select id="protocol" name="type" onchange="updateFormFields()">
+                        <option value="hysteria2">Hysteria2</option>
+                        <option value="tuic">TUIC</option>
+                        <option value="vless-reality">VLESS + Reality</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>入站标签</label>
+                    <input type="text" name="tag" id="tag" placeholder="例如: hy2-in">
+                </div>
+
+                <div class="form-group">
+                    <label>监听端口</label>
+                    <input type="number" name="port" id="port" value="443" min="1" max="65535">
+                </div>
+
+                <!-- Hysteria2 专属字段 -->
+                <div class="protocol-fields" id="fields-hysteria2">
+                    <div class="form-group">
+                        <label>密码 (留空自动生成)</label>
+                        <input type="text" name="password" placeholder="留空自动生成">
+                    </div>
+                    <div class="form-group">
+                        <label>伪装域名</label>
+                        <input type="text" name="masquerade" value="www.bing.com">
+                    </div>
+                </div>
+
+                <!-- TUIC 专属字段 -->
+                <div class="protocol-fields hidden" id="fields-tuic">
+                    <div class="form-group">
+                        <label>UUID (留空自动生成)</label>
+                        <input type="text" name="uuid_tuic" placeholder="留空自动生成">
+                    </div>
+                    <div class="form-group">
+                        <label>密码 (留空自动生成)</label>
+                        <input type="text" name="password_tuic" placeholder="留空自动生成">
+                    </div>
+                </div>
+
+                <!-- VLESS Reality 专属字段 -->
+                <div class="protocol-fields hidden" id="fields-vless-reality">
+                    <div class="form-group">
+                        <label>UUID (留空自动生成)</label>
+                        <input type="text" name="uuid_vless" placeholder="留空自动生成">
+                    </div>
+                    <div class="form-group">
+                        <label>伪装域名</label>
+                        <input type="text" name="server_name" value="www.microsoft.com">
+                    </div>
+                </div>
+            </form>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal()">取消</button>
+            <button class="btn btn-primary" onclick="addInbound()">添加</button>
+        </div>
+    </div>
+</div>
+
+<!-- 详情弹窗 -->
+<div class="modal" id="details-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>入站详情</h3>
+            <button class="modal-close" onclick="closeDetailsModal()">&times;</button>
+        </div>
+        <div class="modal-body" id="details-content">
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeDetailsModal()">关闭</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const inboundsData = {{ inbounds | tojson | safe }};
+
+    function showAddModal() {
+        document.getElementById('add-modal').classList.add('active');
+        updateFormFields();
+    }
+
+    function closeModal() {
+        document.getElementById('add-modal').classList.remove('active');
+    }
+
+    function updateFormFields() {
+        const protocol = document.getElementById('protocol').value;
+        document.querySelectorAll('.protocol-fields').forEach(el => el.classList.add('hidden'));
+        document.getElementById(`fields-${protocol}`).classList.remove('hidden');
+
+        // 更新默认标签和端口
+        const tagInput = document.getElementById('tag');
+        const portInput = document.getElementById('port');
+
+        if (!tagInput.value) {
+            tagInput.placeholder = `${protocol}-in`;
+        }
+
+        if (protocol === 'tuic' && portInput.value === '443') {
+            portInput.value = '8443';
+        } else if (protocol !== 'tuic' && portInput.value === '8443') {
+            portInput.value = '443';
+        }
+    }
+
+    async function addInbound() {
+        const form = document.getElementById('add-form');
+        const formData = new FormData(form);
+        const protocol = formData.get('type');
+
+        const data = {
+            type: protocol,
+            tag: formData.get('tag') || `${protocol}-in`,
+            port: formData.get('port')
+        };
+
+        if (protocol === 'hysteria2') {
+            data.password = formData.get('password');
+            data.masquerade = formData.get('masquerade');
+        } else if (protocol === 'tuic') {
+            data.uuid = formData.get('uuid_tuic');
+            data.password = formData.get('password_tuic');
+        } else if (protocol === 'vless-reality') {
+            data.uuid = formData.get('uuid_vless');
+            data.server_name = formData.get('server_name');
+        }
+
+        try {
+            const response = await fetch('/api/inbounds', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                showToast('入站添加成功', 'success');
+                closeModal();
+                setTimeout(() => location.reload(), 500);
+            } else {
+                showToast(result.error || '添加失败', 'error');
+            }
+        } catch (error) {
+            showToast('添加失败', 'error');
+        }
+    }
+
+    async function deleteInbound(tag) {
+        if (!confirm(`确定删除入站 ${tag}?`)) return;
+
+        try {
+            const response = await fetch(`/api/inbounds/${tag}`, { method: 'DELETE' });
+            const result = await response.json();
+
+            if (result.success) {
+                showToast('删除成功', 'success');
+                document.querySelector(`[data-tag="${tag}"]`).remove();
+            } else {
+                showToast(result.error || '删除失败', 'error');
+            }
+        } catch (error) {
+            showToast('删除失败', 'error');
+        }
+    }
+
+    function copyShareLink(link) {
+        navigator.clipboard.writeText(link).then(() => {
+            showToast('分享链接已复制', 'success');
+        }).catch(() => {
+            // Fallback
+            const textarea = document.createElement('textarea');
+            textarea.value = link;
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+            showToast('分享链接已复制', 'success');
+        });
+    }
+
+    function showDetails(tag) {
+        const inbound = inboundsData.find(i => i.tag === tag);
+        if (!inbound) return;
+
+        let html = `
+        <div class="details-grid">
+            <div class="detail-item">
+                <span class="label">协议:</span>
+                <span class="value">${inbound.type}</span>
+            </div>
+            <div class="detail-item">
+                <span class="label">标签:</span>
+                <span class="value">${inbound.tag}</span>
+            </div>
+            <div class="detail-item">
+                <span class="label">端口:</span>
+                <span class="value">${inbound.port}</span>
+            </div>
+    `;
+
+        if (inbound.password) {
+            html += `
+            <div class="detail-item full">
+                <span class="label">密码:</span>
+                <span class="value selectable">${inbound.password}</span>
+            </div>
+        `;
+        }
+
+        if (inbound.uuid) {
+            html += `
+            <div class="detail-item full">
+                <span class="label">UUID:</span>
+                <span class="value selectable">${inbound.uuid}</span>
+            </div>
+        `;
+        }
+
+        if (inbound.public_key) {
+            html += `
+            <div class="detail-item full">
+                <span class="label">公钥:</span>
+                <span class="value selectable">${inbound.public_key}</span>
+            </div>
+        `;
+        }
+
+        if (inbound.short_id) {
+            html += `
+            <div class="detail-item">
+                <span class="label">Short ID:</span>
+                <span class="value">${inbound.short_id}</span>
+            </div>
+        `;
+        }
+
+        if (inbound.share_link) {
+            html += `
+            <div class="detail-item full">
+                <span class="label">分享链接:</span>
+                <textarea class="share-link" readonly onclick="this.select()">${inbound.share_link}</textarea>
+            </div>
+        `;
+        }
+
+        html += '</div>';
+
+        document.getElementById('details-content').innerHTML = html;
+        document.getElementById('details-modal').classList.add('active');
+    }
+
+    function closeDetailsModal() {
+        document.getElementById('details-modal').classList.remove('active');
+    }
+
+    // URL 参数自动打开添加弹窗
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('add')) {
+        showAddModal();
+        document.getElementById('protocol').value = urlParams.get('add');
+        updateFormFields();
+    }
+</script>
+{% endblock %}

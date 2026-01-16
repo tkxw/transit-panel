@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block title %}登录 - Transit Panel{% endblock %}
+
+{% block auth_content %}
+<div class="login-container">
+    <div class="login-card">
+        <div class="login-header">
+            <div class="login-logo">
+                <span class="logo-icon">◈</span>
+            </div>
+            <h1>Transit Panel</h1>
+            <p>节点中转管理面板</p>
+        </div>
+
+        <form id="login-form" class="login-form">
+            {% if error %}
+            <div class="alert alert-error">{{ error }}</div>
+            {% endif %}
+
+            <div class="form-group">
+                <label for="username">用户名</label>
+                <input type="text" id="username" name="username" required autofocus>
+            </div>
+
+            <div class="form-group">
+                <label for="password">密码</label>
+                <input type="password" id="password" name="password" required>
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-block">登录</button>
+        </form>
+
+        <div class="login-footer">
+            <p>基于 sing-box 的节点中转解决方案</p>
+        </div>
+    </div>
+</div>
+
+<script>
+    document.getElementById('login-form').addEventListener('submit', async function (e) {
+        e.preventDefault();
+
+        const username = document.getElementById('username').value;
+        const password = document.getElementById('password').value;
+
+        try {
+            const response = await fetch('/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                window.location.href = '/dashboard';
+            } else {
+                alert(data.error || '登录失败');
+            }
+        } catch (error) {
+            alert('登录失败，请检查网络');
+        }
+    });
+</script>
+{% endblock %}

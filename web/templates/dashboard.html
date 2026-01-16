@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+
+{% block page_title %}仪表盘{% endblock %}
+
+{% block content %}
+<div class="dashboard">
+    <!-- 状态卡片 -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-icon service {{ 'online' if service_running else 'offline' }}">
+                {{ '✓' if service_running else '✗' }}
+            </div>
+            <div class="stat-info">
+                <span class="stat-label">服务状态</span>
+                <span class="stat-value {{ 'text-success' if service_running else 'text-error' }}">
+                    {{ '运行中' if service_running else '已停止' }}
+                </span>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon inbound">📥</div>
+            <div class="stat-info">
+                <span class="stat-label">入站节点</span>
+                <span class="stat-value">{{ inbound_count }}</span>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon outbound">📤</div>
+            <div class="stat-info">
+                <span class="stat-label">出站节点</span>
+                <span class="stat-value">{{ outbound_count }}</span>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon route">🔀</div>
+            <div class="stat-info">
+                <span class="stat-label">中转规则</span>
+                <span class="stat-value">{{ route_count }}</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 服务器信息 -->
+    <div class="card">
+        <div class="card-header">
+            <h2>服务器信息</h2>
+        </div>
+        <div class="card-body">
+            <div class="info-grid">
+                <div class="info-item">
+                    <span class="info-label">服务器 IP</span>
+                    <span class="info-value" id="server-ip">{{ server_ip }}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">面板端口</span>
+                    <span class="info-value">8080</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 快速操作 -->
+    <div class="card">
+        <div class="card-header">
+            <h2>快速操作</h2>
+        </div>
+        <div class="card-body">
+            <div class="action-buttons">
+                <button class="btn btn-success" onclick="serviceAction('start')">启动服务</button>
+                <button class="btn btn-warning" onclick="serviceAction('restart')">重启服务</button>
+                <button class="btn btn-danger" onclick="serviceAction('stop')">停止服务</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 快速添加 -->
+    <div class="card">
+        <div class="card-header">
+            <h2>快速添加</h2>
+        </div>
+        <div class="card-body">
+            <div class="quick-add-grid">
+                <a href="{{ url_for('inbounds') }}?add=hysteria2" class="quick-add-item">
+                    <span class="quick-add-icon">🚀</span>
+                    <span class="quick-add-title">Hysteria2</span>
+                    <span class="quick-add-desc">高速 QUIC 协议</span>
+                </a>
+                <a href="{{ url_for('inbounds') }}?add=tuic" class="quick-add-item">
+                    <span class="quick-add-icon">⚡</span>
+                    <span class="quick-add-title">TUIC</span>
+                    <span class="quick-add-desc">低延迟协议</span>
+                </a>
+                <a href="{{ url_for('inbounds') }}?add=vless-reality" class="quick-add-item">
+                    <span class="quick-add-icon">🔐</span>
+                    <span class="quick-add-title">VLESS Reality</span>
+                    <span class="quick-add-desc">高安全协议</span>
+                </a>
+                <a href="{{ url_for('outbounds') }}?add=socks" class="quick-add-item">
+                    <span class="quick-add-icon">🔌</span>
+                    <span class="quick-add-title">SOCKS5 出站</span>
+                    <span class="quick-add-desc">添加代理节点</span>
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    async function serviceAction(action) {
+        try {
+            const response = await fetch(`/api/service/${action}`, { method: 'POST' });
+            const data = await response.json();
+
+            if (data.success) {
+                showToast(`服务${action === 'start' ? '启动' : action === 'stop' ? '停止' : '重启'}成功`, 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || '操作失败', 'error');
+            }
+        } catch (error) {
+            showToast('操作失败', 'error');
+        }
+    }
+</script>
+{% endblock %}

@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+
+{% block page_title %}系统设置{% endblock %}
+
+{% block content %}
+<div class="settings-page">
+    <!-- 服务管理 -->
+    <div class="card">
+        <div class="card-header">
+            <h2>服务管理</h2>
+        </div>
+        <div class="card-body">
+            <div class="service-status">
+                <span class="status-indicator {{ 'online' if service_running else 'offline' }}"></span>
+                <span class="status-text">sing-box 服务: {{ '运行中' if service_running else '已停止' }}</span>
+            </div>
+            <div class="action-buttons">
+                <button class="btn btn-success" onclick="serviceAction('start')">启动</button>
+                <button class="btn btn-warning" onclick="serviceAction('restart')">重启</button>
+                <button class="btn btn-danger" onclick="serviceAction('stop')">停止</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 修改密码 -->
+    <div class="card">
+        <div class="card-header">
+            <h2>修改密码</h2>
+        </div>
+        <div class="card-body">
+            <form id="password-form" class="settings-form">
+                <div class="form-group">
+                    <label>新密码</label>
+                    <input type="password" id="new-password" required minlength="6" placeholder="至少6位">
+                </div>
+                <div class="form-group">
+                    <label>确认密码</label>
+                    <input type="password" id="confirm-password" required placeholder="再次输入新密码">
+                </div>
+                <button type="submit" class="btn btn-primary">修改密码</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- 日志查看 -->
+    <div class="card">
+        <div class="card-header">
+            <h2>服务日志</h2>
+            <button class="btn btn-sm btn-secondary" onclick="refreshLogs()">刷新</button>
+        </div>
+        <div class="card-body">
+            <pre class="log-viewer" id="log-content">加载中...</pre>
+        </div>
+    </div>
+
+    <!-- 关于 -->
+    <div class="card">
+        <div class="card-header">
+            <h2>关于</h2>
+        </div>
+        <div class="card-body">
+            <div class="about-info">
+                <p><strong>Transit Panel</strong> v1.0.0</p>
+                <p>基于 sing-box 的节点中转管理面板</p>
+                <p>
+                    <a href="https://github.com/SagerNet/sing-box" target="_blank">sing-box</a> |
+                    <a href="https://sing-box.sagernet.org" target="_blank">文档</a>
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    async function serviceAction(action) {
+        try {
+            const response = await fetch(`/api/service/${action}`, { method: 'POST' });
+            const data = await response.json();
+
+            if (data.success) {
+                showToast(`服务${action === 'start' ? '启动' : action === 'stop' ? '停止' : '重启'}成功`, 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || '操作失败', 'error');
+            }
+        } catch (error) {
+            showToast('操作失败', 'error');
+        }
+    }
+
+    document.getElementById('password-form').addEventListener('submit', async function (e) {
+        e.preventDefault();
+
+        const newPassword = document.getElementById('new-password').value;
+        const confirmPassword = document.getElementById('confirm-password').value;
+
+        if (newPassword !== confirmPassword) {
+            showToast('两次密码不一致', 'error');
+            return;
+        }
+
+        if (newPassword.length < 6) {
+            showToast('密码至少6位', 'error');
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: newPassword })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                showToast('密码修改成功，请重新登录', 'success');
+                setTimeout(() => window.location.href = '/logout', 1500);
+            } else {
+                showToast(data.error || '修改失败', 'error');
+            }
+        } catch (error) {
+            showToast('修改失败', 'error');
+        }
+    });
+
+    async function refreshLogs() {
+        try {
+            const response = await fetch('/api/logs');
+            const data = await response.json();
+
+            if (data.success) {
+                document.getElementById('log-content').textContent = data.data || '暂无日志';
+            }
+        } catch (error) {
+            document.getElementById('log-content').textContent = '加载失败';
+        }
+    }
+
+    // 页面加载时获取日志
+    refreshLogs();
+</script>
+{% endblock %}
