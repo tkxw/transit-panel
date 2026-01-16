@@ -145,8 +145,6 @@ init_config() {
     local server_ip=$(get_public_ip)
     local use_domain="${1:-}"
     local domain="${2:-}"
-    # 生成随机 URL 路径后缀
-    local url_path=$(openssl rand -hex 8)
     
     cat > "$CONFIG_DIR/config.json" << EOFCONFIG
 {
@@ -158,8 +156,7 @@ init_config() {
         "server_ip": "$server_ip",
         "domain": "$domain",
         "use_ssl": $([ -n "$domain" ] && echo "true" || echo "false"),
-        "web_port": $WEB_PORT,
-        "url_path": "$url_path"
+        "web_port": $WEB_PORT
     },
     "inbounds": [],
     "outbounds": [],
@@ -423,7 +420,6 @@ show_login_info() {
     local domain=$(jq -r '.panel.domain // ""' "$CONFIG_DIR/config.json")
     local admin_pass=$(jq -r '.panel.admin_pass_plain // ""' "$CONFIG_DIR/config.json")
     local web_port=$(jq -r '.panel.web_port' "$CONFIG_DIR/config.json")
-    local url_path=$(jq -r '.panel.url_path // ""' "$CONFIG_DIR/config.json")
     
     echo ""
     echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
@@ -432,9 +428,9 @@ show_login_info() {
     echo ""
     
     if [ -n "$domain" ] && [ "$domain" != "null" ]; then
-        echo -e "  访问地址: ${GREEN}https://$domain:$web_port/$url_path/${NC}"
+        echo -e "  访问地址: ${GREEN}https://$domain:$web_port${NC}"
     else
-        echo -e "  访问地址: ${GREEN}https://$server_ip:$web_port/$url_path/${NC}"
+        echo -e "  访问地址: ${GREEN}https://$server_ip:$web_port${NC}"
     fi
     echo -e "  ${YELLOW}(自签名证书，浏览器会提示不安全，点击继续访问即可)${NC}"
     
