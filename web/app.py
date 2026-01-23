@@ -1226,6 +1226,7 @@ def apply_ssl_certificate(domain):
     """使用 acme.sh 申请 SSL 证书"""
     import shutil
     cert_dir = os.path.join(CONFIG_DIR, 'certs')
+    log_file = os.path.join(LOG_DIR, 'acme.log')
     os.makedirs(cert_dir, exist_ok=True)
     
     cert_path = os.path.join(cert_dir, f'{domain}.crt')
@@ -1246,7 +1247,7 @@ def apply_ssl_certificate(domain):
                 acme_path = p
                 break
         else:
-            return False, 'acme.sh 未安装，请先运行: curl https://get.acme.sh | sh'
+            return False, 'acme.sh 未安装，请在服务器运行: curl https://get.acme.sh | sh -s email=your@email.com'
     
     def copy_certs_to_panel():
         """将域名证书复制到 panel.crt/panel.key 供 gunicorn 使用"""
@@ -1262,45 +1263,64 @@ def apply_ssl_certificate(domain):
             print(f"复制证书失败: {e}")
         return False
     
-    try:
-        # 使用 standalone 模式申请证书 (需要 80 端口)
-        result = subprocess.run([
+    def try_issue_cert(mode_args, mode_name):
+        """尝试使用指定模式申请证书"""
+        cmd = [
             acme_path, '--issue', '-d', domain,
-            '--standalone', '--force',
+            '--force', '--debug', '--log', log_file,
             '--cert-file', cert_path,
             '--key-file', key_path,
             '--fullchain-file', fullchain_path
-        ], capture_output=True, text=True, timeout=120)
+        ] + mode_args
         
-        if result.returncode == 0 or os.path.exists(cert_path):
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+        
+        if result.returncode == 0 or (os.path.exists(cert_path) and os.path.exists(key_path)):
             os.chmod(key_path, 0o600)
-            # 复制证书到 panel.crt/panel.key
             if copy_certs_to_panel():
-                return True, '证书申请成功并已应用'
-            return True, '证书申请成功，但复制到面板证书失败'
-        else:
-            # 尝试使用 webroot 模式
-            webroot = '/var/www/html'
-            if os.path.exists(webroot):
-                result = subprocess.run([
-                    acme_path, '--issue', '-d', domain,
-                    '-w', webroot, '--force',
-                    '--cert-file', cert_path,
-                    '--key-file', key_path,
-                    '--fullchain-file', fullchain_path
-                ], capture_output=True, text=True, timeout=120)
-                
-                if result.returncode == 0 or os.path.exists(cert_path):
-                    os.chmod(key_path, 0o600)
-                    # 复制证书到 panel.crt/panel.key
-                    if copy_certs_to_panel():
-                        return True, '证书申请成功并已应用'
-                    return True, '证书申请成功，但复制到面板证书失败'
-            
-            error_msg = result.stderr or result.stdout or '证书申请失败'
-            return False, f'证书申请失败: {error_msg[:200]}'
+                return True, f'证书申请成功 ({mode_name} 模式)'
+            return True, f'证书申请成功 ({mode_name})，但复制到面板失败'
+        
+        return False, result.stderr or result.stdout or ''
+    
+    try:
+        # 方法1: standalone 模式 (需要 80 端口空闲)
+        success, msg = try_issue_cert(['--standalone'], 'standalone/HTTP')
+        if success:
+            return True, msg
+        
+        # 方法2: alpn 模式 (使用 443 端口，需要先停止面板)
+        # 先尝试停止占用 443 端口的服务
+        subprocess.run(['systemctl', 'stop', 'transit-panel-web'], capture_output=True)
+        import time
+        time.sleep(1)
+        
+        success, msg = try_issue_cert(['--alpn'], 'alpn/TLS')
+        
+        # 重新启动面板服务
+        subprocess.run(['systemctl', 'start', 'transit-panel-web'], capture_output=True)
+        
+        if success:
+            return True, msg
+        
+        # 方法3: webroot 模式
+        webroot = '/var/www/html'
+        if os.path.exists(webroot):
+            success, msg = try_issue_cert(['-w', webroot], 'webroot')
+            if success:
+                return True, msg
+        
+        # 所有方法都失败，返回详细错误
+        error_hint = '''
+证书申请失败，请检查:
+1. 域名是否已正确解析到服务器IP (可用 ping 域名 检查)
+2. 服务器防火墙是否开放 80 和 443 端口
+3. 查看详细日志: cat /var/log/transit-panel/acme.log
+'''
+        return False, error_hint
+        
     except subprocess.TimeoutExpired:
-        return False, '证书申请超时，请检查域名解析是否正确'
+        return False, '证书申请超时(3分钟)，请检查域名解析和网络连接'
     except Exception as e:
         return False, f'证书申请出错: {str(e)}'
 
