@@ -1222,6 +1222,88 @@ def api_get_config():
         }
     })
 
+def apply_ssl_certificate(domain):
+    """使用 acme.sh 申请 SSL 证书"""
+    import shutil
+    cert_dir = os.path.join(CONFIG_DIR, 'certs')
+    os.makedirs(cert_dir, exist_ok=True)
+    
+    cert_path = os.path.join(cert_dir, f'{domain}.crt')
+    key_path = os.path.join(cert_dir, f'{domain}.key')
+    fullchain_path = os.path.join(cert_dir, f'{domain}.fullchain.crt')
+    
+    # gunicorn 使用的固定文件名
+    panel_cert = os.path.join(cert_dir, 'panel.crt')
+    panel_key = os.path.join(cert_dir, 'panel.key')
+    
+    # 检查 acme.sh 是否安装
+    acme_path = os.path.expanduser('~/.acme.sh/acme.sh')
+    if not os.path.exists(acme_path):
+        # 尝试其他常见路径
+        alt_paths = ['/root/.acme.sh/acme.sh', '/usr/local/bin/acme.sh']
+        for p in alt_paths:
+            if os.path.exists(p):
+                acme_path = p
+                break
+        else:
+            return False, 'acme.sh 未安装，请先运行: curl https://get.acme.sh | sh'
+    
+    def copy_certs_to_panel():
+        """将域名证书复制到 panel.crt/panel.key 供 gunicorn 使用"""
+        try:
+            # 优先使用 fullchain 证书
+            src_cert = fullchain_path if os.path.exists(fullchain_path) else cert_path
+            if os.path.exists(src_cert) and os.path.exists(key_path):
+                shutil.copy2(src_cert, panel_cert)
+                shutil.copy2(key_path, panel_key)
+                os.chmod(panel_key, 0o600)
+                return True
+        except Exception as e:
+            print(f"复制证书失败: {e}")
+        return False
+    
+    try:
+        # 使用 standalone 模式申请证书 (需要 80 端口)
+        result = subprocess.run([
+            acme_path, '--issue', '-d', domain,
+            '--standalone', '--force',
+            '--cert-file', cert_path,
+            '--key-file', key_path,
+            '--fullchain-file', fullchain_path
+        ], capture_output=True, text=True, timeout=120)
+        
+        if result.returncode == 0 or os.path.exists(cert_path):
+            os.chmod(key_path, 0o600)
+            # 复制证书到 panel.crt/panel.key
+            if copy_certs_to_panel():
+                return True, '证书申请成功并已应用'
+            return True, '证书申请成功，但复制到面板证书失败'
+        else:
+            # 尝试使用 webroot 模式
+            webroot = '/var/www/html'
+            if os.path.exists(webroot):
+                result = subprocess.run([
+                    acme_path, '--issue', '-d', domain,
+                    '-w', webroot, '--force',
+                    '--cert-file', cert_path,
+                    '--key-file', key_path,
+                    '--fullchain-file', fullchain_path
+                ], capture_output=True, text=True, timeout=120)
+                
+                if result.returncode == 0 or os.path.exists(cert_path):
+                    os.chmod(key_path, 0o600)
+                    # 复制证书到 panel.crt/panel.key
+                    if copy_certs_to_panel():
+                        return True, '证书申请成功并已应用'
+                    return True, '证书申请成功，但复制到面板证书失败'
+            
+            error_msg = result.stderr or result.stdout or '证书申请失败'
+            return False, f'证书申请失败: {error_msg[:200]}'
+    except subprocess.TimeoutExpired:
+        return False, '证书申请超时，请检查域名解析是否正确'
+    except Exception as e:
+        return False, f'证书申请出错: {str(e)}'
+
 @app.route('/api/config', methods=['POST'])
 @login_required
 def api_update_config():
@@ -1229,7 +1311,11 @@ def api_update_config():
     config = load_config()
     
     old_port = config['panel'].get('web_port', 8080)
+    old_domain = config['panel'].get('domain', '')
     port_changed = False
+    domain_changed = False
+    new_port = old_port
+    new_domain = old_domain
     
     if 'web_port' in data:
         new_port = int(data['web_port'])
@@ -1238,13 +1324,17 @@ def api_update_config():
             port_changed = True
     
     if 'domain' in data:
-        config['panel']['domain'] = data['domain']
+        new_domain = data['domain'].strip()
+        if new_domain != old_domain:
+            config['panel']['domain'] = new_domain
+            domain_changed = True
     
     save_config(config)
     
-    message = '配置已保存'
+    messages = []
+    cert_success = False
     
-    # 如果端口改变，需要更新 systemd 服务文件
+    # 如果端口改变，需要更新 systemd 服务文件并延迟重启服务
     if port_changed:
         try:
             # 读取并更新 systemd 服务文件
@@ -1260,13 +1350,70 @@ def api_update_config():
                 with open(service_path, 'w') as f:
                     f.write(content)
                 
-                # 重新加载 systemd
+                # 重新加载 systemd 配置
                 subprocess.run(['systemctl', 'daemon-reload'], check=True)
-                message = f'端口已更新为 {new_port}，请手动重启 Web 服务或刷新页面后使用新端口访问'
+                
+                # 使用后台线程延迟重启服务，避免响应丢失
+                import threading
+                def delayed_restart():
+                    import time
+                    time.sleep(2)  # 等待2秒确保响应已发送
+                    try:
+                        subprocess.run(['systemctl', 'restart', 'transit-panel-web'], check=True)
+                    except Exception as e:
+                        print(f"服务重启失败: {e}")
+                
+                restart_thread = threading.Thread(target=delayed_restart, daemon=True)
+                restart_thread.start()
+                
+                messages.append(f'端口已更新为 {new_port}，服务将在2秒后重启，请使用新端口 https://您的IP:{new_port} 访问')
+            else:
+                messages.append(f'端口配置已保存为 {new_port}，服务文件不存在，请手动重启服务')
         except Exception as e:
-            message = f'端口配置已保存，但服务文件更新失败: {str(e)}，请手动修改 /etc/systemd/system/transit-panel-web.service'
+            messages.append(f'端口配置已保存，但服务重启失败: {str(e)}')
     
-    return jsonify({'success': True, 'message': message})
+    # 如果域名改变，自动申请 SSL 证书
+    if domain_changed and new_domain:
+        success, cert_msg = apply_ssl_certificate(new_domain)
+        cert_success = success
+        if success:
+            # 保存证书路径到配置 (使用固定的 panel.crt/panel.key)
+            config['panel']['ssl_cert'] = os.path.join(CONFIG_DIR, 'certs', 'panel.crt')
+            config['panel']['ssl_key'] = os.path.join(CONFIG_DIR, 'certs', 'panel.key')
+            save_config(config)
+            messages.append(f'域名 {new_domain} 的 SSL 证书: {cert_msg}')
+            
+            # 延迟重启服务以应用新证书
+            import threading
+            def delayed_restart_for_cert():
+                import time
+                time.sleep(2)
+                try:
+                    subprocess.run(['systemctl', 'restart', 'transit-panel-web'], check=True)
+                except Exception as e:
+                    print(f"证书应用后服务重启失败: {e}")
+            
+            restart_thread = threading.Thread(target=delayed_restart_for_cert, daemon=True)
+            restart_thread.start()
+            messages.append('服务将在2秒后重启以应用新证书')
+        else:
+            messages.append(f'域名已保存，但证书申请失败: {cert_msg}')
+    elif domain_changed and not new_domain:
+        # 域名被清空
+        config['panel'].pop('ssl_cert', None)
+        config['panel'].pop('ssl_key', None)
+        save_config(config)
+        messages.append('域名已清空')
+    
+    final_message = '；'.join(messages) if messages else '配置已保存'
+    
+    return jsonify({
+        'success': True, 
+        'message': final_message,
+        'port_changed': port_changed,
+        'new_port': new_port if port_changed else None,
+        'cert_applied': cert_success
+    })
 
 # --- Clash 订阅链接 API ---
 @app.route('/api/subscribe/clash')
